@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Move the bridge from isolated pipeline pieces to realistic network lifecycle behavior: Jetstream subscription management, remote actor discovery for follows, and signed outbound accept delivery.
+Harden bridge runtime networking behavior for follow flows and Jetstream lifecycle while keeping the system fully test-driven.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -46,22 +46,24 @@ Move the bridge from isolated pipeline pieces to realistic network lifecycle beh
   - cursor rewind on reconnect/start
   - options update messages for dynamic DID updates
   - auto-reconnect scheduling on disconnect
-- Implemented remote actor discovery for follow requests:
-  - resolves follower inbox/sharedInbox via signed GET when follow payload only contains actor ID
-  - queues outbound `Accept` delivery after follow acceptance
+- Implemented remote actor discovery hardening for follow requests:
+  - signed GET actor fetch when follow payload only contains actor ID
+  - TTL-based remote actor cache with invalidation and expiry
+  - cache-aware follow endpoint resolution in inbox path
+  - queued outbound `Accept` delivery after follow acceptance
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
 - Test command: `npm test`
-- Result: all tests passing (13/13)
+- Result: all tests passing (14/14)
 
 ## Next Milestone
-Add durable and protocol-hardening pieces before live federation trials:
-- Persist state and queue (SQLite first) for restart-safe operation.
-- Implement remote actor fetch caching and invalidation strategy.
-- Add inbound signature verification for ActivityPub inbox requests.
-- Add end-to-end integration test harness with mocked Jetstream stream and remote ActivityPub server behavior (including retry/permanent-failure paths).
+Add production-critical trust and durability guarantees:
+- Add inbound HTTP signature verification for ActivityPub inbox requests.
+- Persist queue/state (SQLite-backed) for restart-safe operation.
+- Add integration tests for signature-verification pass/fail behavior and restart recovery.
+- Add an executable local E2E harness that simulates Jetstream stream + remote ActivityPub server retries.
 
 ## Notes
 - Current state is intentionally in-memory for fast iteration and deterministic tests.
-- Real deployment requires persistent storage and inbox request signature verification.
+- Real deployment requires persistent storage and inbox request signature verification before live federation.

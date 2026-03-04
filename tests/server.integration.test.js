@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { RemoteActorCache } from "../src/ap/remote-actor-cache.js";
 import { dispatchBridgeRequest } from "../src/server.js";
 import { InMemoryKeyManager } from "../src/crypto/key-manager.js";
 import { InMemoryDeliveryQueue } from "../src/ingest/jetstream-processor.js";
@@ -119,4 +120,61 @@ test("dispatchBridgeRequest resolves remote actor and queues Accept delivery", a
   assert.equal(queued.operation, "follow-accept");
   assert.equal(queued.destination, "https://remote.example/users/bob/inbox");
   assert.equal(queued.activity.type, "Accept");
+});
+
+test("dispatchBridgeRequest reuses remote actor cache across follows", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+  const actorCache = new RemoteActorCache();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    displayName: "Alice"
+  });
+
+  let actorFetchCalls = 0;
+  const fetchImpl = async () => {
+    actorFetchCalls += 1;
+    return {
+      status: 200,
+      json: async () => ({
+        id: "https://remote.example/users/bob",
+        inbox: "https://remote.example/users/bob/inbox"
+      })
+    };
+  };
+
+  const followPayload = JSON.stringify({
+    type: "Follow",
+    actor: "https://remote.example/users/bob",
+    object: "https://bridge.example/ap/actor/did%3Aplc%3Aalice"
+  });
+
+  await dispatchBridgeRequest({
+    method: "POST",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/inbox",
+    headers: { host: "bridge.example" },
+    bodyText: followPayload,
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl,
+    actorCache
+  });
+
+  await dispatchBridgeRequest({
+    method: "POST",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/inbox",
+    headers: { host: "bridge.example" },
+    bodyText: followPayload,
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl,
+    actorCache
+  });
+
+  assert.equal(actorFetchCalls, 1);
 });

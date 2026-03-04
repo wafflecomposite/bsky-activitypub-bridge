@@ -8,7 +8,7 @@ import { InMemoryKeyManager } from "./crypto/key-manager.js";
 import { decodeDidFromPath } from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
 
-export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null } = {}) {
+export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null, actorCache = null } = {}) {
   let publicBaseUrl = baseUrl;
 
   const server = http.createServer(async (req, res) => {
@@ -24,7 +24,8 @@ export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeS
         keyManager,
         baseUrl: publicBaseUrl,
         fetchImpl,
-        deliveryQueue
+        deliveryQueue,
+        actorCache
       });
 
       sendJsonResponse(res, response);
@@ -85,12 +86,13 @@ export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeS
     store,
     keyManager,
     deliveryQueue,
+    actorCache,
     server,
     getBaseUrl: () => publicBaseUrl
   };
 }
 
-export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, bodyText = "", store, keyManager, baseUrl, fetchImpl = fetch, deliveryQueue = null }) {
+export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, bodyText = "", store, keyManager, baseUrl, fetchImpl = fetch, deliveryQueue = null, actorCache = null }) {
   if (!baseUrl) {
     throw new Error("Public base URL is not configured");
   }
@@ -107,7 +109,7 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
   }
 
   if (method === "POST" && url.pathname.startsWith("/ap/actor/") && url.pathname.endsWith("/inbox")) {
-    return handlePostInbox({ url, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue });
+    return handlePostInbox({ url, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue, actorCache });
   }
 
   return {
@@ -197,7 +199,7 @@ function handleGetActor({ url, store, keyManager, publicBaseUrl }) {
   };
 }
 
-async function handlePostInbox({ url, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue }) {
+async function handlePostInbox({ url, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length, -"/inbox".length);
@@ -238,7 +240,8 @@ async function handlePostInbox({ url, store, keyManager, publicBaseUrl, bodyText
         targetDid: did,
         baseUrl: publicBaseUrl,
         keyManager,
-        fetchImpl
+        fetchImpl,
+        actorCache
       });
     }
 

@@ -1,16 +1,30 @@
 import { actorId } from "../domain/identifiers.js";
 import { createSignedGetHeaders } from "../federation/http-signature.js";
 
-export async function resolveFollowerEndpoints({ activity, targetDid, baseUrl, keyManager, fetchImpl = fetch }) {
+export async function resolveFollowerEndpoints({ activity, targetDid, baseUrl, keyManager, fetchImpl = fetch, actorCache = null }) {
   const actorRef = normalizeActorId(activity.actor);
   const embeddedInbox = extractOptionalInbox(activity.actor);
   const embeddedSharedInbox = extractOptionalSharedInbox(activity.actor);
 
   if (embeddedInbox) {
+    actorCache?.set(actorRef, {
+      inboxUrl: embeddedInbox,
+      sharedInboxUrl: embeddedSharedInbox
+    });
+
     return {
       actorId: actorRef,
       inboxUrl: embeddedInbox,
       sharedInboxUrl: embeddedSharedInbox
+    };
+  }
+
+  const cached = actorCache?.get(actorRef);
+  if (cached?.inboxUrl) {
+    return {
+      actorId: actorRef,
+      inboxUrl: cached.inboxUrl,
+      sharedInboxUrl: cached.sharedInboxUrl ?? null
     };
   }
 
@@ -21,6 +35,8 @@ export async function resolveFollowerEndpoints({ activity, targetDid, baseUrl, k
     keyManager,
     fetchImpl
   });
+
+  actorCache?.set(actorRef, remoteActor);
 
   return {
     actorId: actorRef,

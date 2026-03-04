@@ -96,3 +96,33 @@ test("computeExponentialBackoffMs grows and caps", () => {
   assert.equal(computeExponentialBackoffMs(3), 4000);
   assert.equal(computeExponentialBackoffMs(10), 60000);
 });
+
+test("DeliveryWorker can enable HTTP Message Signatures", async () => {
+  const queue = new InMemoryDeliveryQueue();
+  const keyManager = new InMemoryKeyManager();
+
+  let request;
+  const fetchImpl = async (url, init) => {
+    request = { url, init };
+    return { status: 202 };
+  };
+
+  queue.enqueue({
+    did: "did:plc:alice",
+    destination: "https://remote.example/inbox",
+    activity: { type: "Create", id: "x" }
+  });
+
+  const worker = new DeliveryWorker({
+    queue,
+    keyManager,
+    fetchImpl,
+    baseUrl: "https://bridge.example",
+    messageSignaturesEnabled: true
+  });
+
+  const result = await worker.drainOnce();
+  assert.equal(result.status, "delivered");
+  assert.equal(typeof request.init.headers["signature-input"], "string");
+  assert.equal(typeof request.init.headers["content-digest"], "string");
+});

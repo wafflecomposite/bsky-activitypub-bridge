@@ -24,6 +24,7 @@ const app = createBridgeApplication({
   delivery: {
     drainIntervalMs: parseInteger(process.env.DELIVERY_DRAIN_INTERVAL_MS, 1000),
     drainBatchSize: parseInteger(process.env.DELIVERY_DRAIN_BATCH_SIZE, 100),
+    messageSignaturesEnabled: parseBoolean(process.env.ENABLE_HTTP_MESSAGE_SIGNATURES, false),
     onDrainError: (error) => {
       console.error("Delivery drain error:", error instanceof Error ? error.message : String(error));
     },

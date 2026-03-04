@@ -8,7 +8,7 @@ export class DeliveryWorker {
   #maxAttempts;
   #deliveryTransport;
 
-  constructor({ queue, keyManager, fetchImpl = fetch, baseUrl, maxAttempts = 4, deliveryTransport = null, now = () => Date.now(), onTransportAttempt = null, onTransportResult = null }) {
+  constructor({ queue, keyManager, fetchImpl = fetch, baseUrl, maxAttempts = 4, deliveryTransport = null, now = () => Date.now(), onTransportAttempt = null, onTransportResult = null, messageSignaturesEnabled = false }) {
     this.#queue = queue;
     this.#keyManager = keyManager;
     this.#baseUrl = baseUrl;
@@ -17,7 +17,8 @@ export class DeliveryWorker {
       fetchImpl,
       now,
       onAttempt: onTransportAttempt,
-      onResult: onTransportResult
+      onResult: onTransportResult,
+      messageSignaturesEnabled
     });
   }
 

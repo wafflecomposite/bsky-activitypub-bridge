@@ -12,7 +12,7 @@ export class BridgeRuntime {
   #jetstreamDidRefreshTimer = null;
   #metrics;
 
-  constructor({ baseUrl, store = new InMemoryBridgeStore(), state = new InMemoryJetstreamState(), queue = new InMemoryDeliveryQueue(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, shardId = "default", postVisibility = "unlisted", onTransportAttempt = null, onTransportResult = null }) {
+  constructor({ baseUrl, store = new InMemoryBridgeStore(), state = new InMemoryJetstreamState(), queue = new InMemoryDeliveryQueue(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, shardId = "default", postVisibility = "unlisted", onTransportAttempt = null, onTransportResult = null, messageSignaturesEnabled = false }) {
     this.store = store;
     this.queue = queue;
     this.state = state;
@@ -34,7 +34,8 @@ export class BridgeRuntime {
       fetchImpl,
       baseUrl,
       onTransportAttempt,
-      onTransportResult
+      onTransportResult,
+      messageSignaturesEnabled
     });
 
     this.#metrics = {

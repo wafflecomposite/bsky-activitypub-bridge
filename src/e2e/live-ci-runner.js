@@ -18,7 +18,8 @@ export function buildLiveHarnessOptions({ env = process.env } = {}) {
   return {
     credentialsFile: env.LIVE_E2E_CREDENTIALS_FILE ?? "test_credentials.json",
     credentialsMarkdownFile: env.LIVE_E2E_CREDENTIALS_MD_FILE ?? "test_credentials.md",
-    mediaFixturePath: env.LIVE_E2E_MEDIA_FIXTURE ?? "tests/data/example_image.jpg"
+    mediaFixturePath: env.LIVE_E2E_MEDIA_FIXTURE ?? "tests/data/example_image.jpg",
+    messageSignaturesEnabled: parseBooleanFlag(env.LIVE_E2E_ENABLE_HTTP_MESSAGE_SIGNATURES, false)
   };
 }
 

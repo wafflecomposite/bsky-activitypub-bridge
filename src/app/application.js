@@ -84,7 +84,8 @@ export function createBridgeApplication({
       shardId,
       postVisibility,
       onTransportAttempt: delivery.onTransportAttempt ?? null,
-      onTransportResult: delivery.onTransportResult ?? null
+      onTransportResult: delivery.onTransportResult ?? null,
+      messageSignaturesEnabled: delivery.messageSignaturesEnabled ?? false
     });
 
     if (jetstream.enabled) {

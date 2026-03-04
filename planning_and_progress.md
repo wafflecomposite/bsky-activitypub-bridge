@@ -121,6 +121,11 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - `BridgeRuntime.getMetrics()` exposes queue depth, delivery counters, and last delivery result snapshot
   - `createBridgeApplication().getMetrics()` exposes runtime metrics (or pre-start baseline)
   - live E2E now asserts delivered count and includes runtime metrics in result artifacts
+- Added RFC9421-style outbound message signature support:
+  - new message-signature builder with `Content-Digest`, `Signature-Input`, and structured `Signature` fields
+  - optional dual-signing mode in delivery transport (legacy cavage signature + RFC9421 headers)
+  - runtime/env wiring (`ENABLE_HTTP_MESSAGE_SIGNATURES` and live harness toggle)
+  - unit tests plus successful live validation with message signatures enabled
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
@@ -135,7 +140,7 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
 
 ## Next Milestone
 Federation compatibility and production hardening:
-- Add RFC 9421 HTTP Message Signatures support alongside current cavage-style signatures.
+- Add inbound RFC9421 message signature verification path alongside current cavage verifier.
 - Plan migration path from JSON-file durability to SQLite/Postgres.
 
 ## TODO

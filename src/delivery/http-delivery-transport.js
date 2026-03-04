@@ -1,16 +1,19 @@
 import { createSignedPostHeaders } from "../federation/http-signature.js";
+import { createMessageSignatureHeaders } from "../federation/http-message-signature.js";
 
 export class HttpDeliveryTransport {
   #fetch;
   #now;
   #onAttempt;
   #onResult;
+  #messageSignaturesEnabled;
 
-  constructor({ fetchImpl = fetch, now = () => Date.now(), onAttempt = null, onResult = null } = {}) {
+  constructor({ fetchImpl = fetch, now = () => Date.now(), onAttempt = null, onResult = null, messageSignaturesEnabled = false } = {}) {
     this.#fetch = fetchImpl;
     this.#now = now;
     this.#onAttempt = onAttempt;
     this.#onResult = onResult;
+    this.#messageSignaturesEnabled = messageSignaturesEnabled;
   }
 
   async sendSignedActivity({ destination, body, keyId, privateKeyPem, metadata = {} }) {
@@ -21,6 +24,18 @@ export class HttpDeliveryTransport {
       keyId,
       privateKeyPem
     });
+
+    if (this.#messageSignaturesEnabled) {
+      const cavageSignature = headers.signature;
+      Object.assign(headers, createMessageSignatureHeaders({
+        method: "POST",
+        destination,
+        body,
+        keyId,
+        privateKeyPem
+      }));
+      headers.authorization = `Signature ${cavageSignature}`;
+    }
 
     if (this.#onAttempt) {
       this.#onAttempt({

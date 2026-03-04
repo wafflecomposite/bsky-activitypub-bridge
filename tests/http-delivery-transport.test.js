@@ -65,3 +65,33 @@ test("HttpDeliveryTransport includes error response body for non-2xx", async () 
   assert.equal(events[0].status, 401);
   assert.equal(events[0].responseBody, "{\"error\":\"invalid signature\"}");
 });
+
+test("HttpDeliveryTransport can attach RFC9421 message signature headers", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" }
+  });
+
+  let requestHeaders;
+  const transport = new HttpDeliveryTransport({
+    messageSignaturesEnabled: true,
+    fetchImpl: async (_url, init) => {
+      requestHeaders = init.headers;
+      return { status: 202 };
+    }
+  });
+
+  await transport.sendSignedActivity({
+    destination: "https://remote.example/inbox",
+    body: JSON.stringify({ type: "Create", id: "x" }),
+    keyId: "https://bridge.example/ap/actor/did%3Aplc%3Aalice#main-key",
+    privateKeyPem: privateKey
+  });
+
+  assert.equal(typeof requestHeaders["content-digest"], "string");
+  assert.equal(typeof requestHeaders["signature-input"], "string");
+  assert.equal(typeof requestHeaders.signature, "string");
+  assert.equal(typeof requestHeaders.authorization, "string");
+  assert.equal(requestHeaders.authorization.startsWith("Signature keyId="), true);
+});

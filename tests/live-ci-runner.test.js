@@ -47,13 +47,15 @@ test("buildLiveHarnessOptions pulls credential and media paths", () => {
     env: {
       LIVE_E2E_CREDENTIALS_FILE: "/tmp/creds.json",
       LIVE_E2E_CREDENTIALS_MD_FILE: "/tmp/creds.md",
-      LIVE_E2E_MEDIA_FIXTURE: "/tmp/image.jpg"
+      LIVE_E2E_MEDIA_FIXTURE: "/tmp/image.jpg",
+      LIVE_E2E_ENABLE_HTTP_MESSAGE_SIGNATURES: "1"
     }
   });
 
   assert.deepEqual(options, {
     credentialsFile: "/tmp/creds.json",
     credentialsMarkdownFile: "/tmp/creds.md",
-    mediaFixturePath: "/tmp/image.jpg"
+    mediaFixturePath: "/tmp/image.jpg",
+    messageSignaturesEnabled: true
   });
 });

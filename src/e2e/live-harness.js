@@ -13,6 +13,7 @@ export async function runLiveE2EHarness({
   credentialsMarkdownFile = "test_credentials.md",
   cloudflaredPath = "./tools/bin/cloudflared",
   mediaFixturePath = "tests/data/example_image.jpg",
+  messageSignaturesEnabled = false,
   cleanup = false,
   workDir = null,
   log = () => {}
@@ -49,6 +50,7 @@ export async function runLiveE2EHarness({
       delivery: {
         drainIntervalMs: 500,
         drainBatchSize: 100,
+        messageSignaturesEnabled,
         onTransportResult: (event) => {
           if (event.status === null || event.status >= 400) {
             log(`delivery-failure destination=${event.destination} status=${event.status} body=${event.responseBody ?? ""}`);
@@ -97,6 +99,7 @@ export async function runLiveE2EHarness({
       delivery: {
         drainIntervalMs: 500,
         drainBatchSize: 100,
+        messageSignaturesEnabled,
         onTransportResult: (event) => {
           if (event.status === null || event.status >= 400) {
             log(`delivery-failure destination=${event.destination} status=${event.status} body=${event.responseBody ?? ""}`);

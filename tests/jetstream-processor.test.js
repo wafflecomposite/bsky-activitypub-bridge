@@ -305,3 +305,63 @@ test("JetstreamProcessor maps replies to bridged non-self parent when cached", (
     "https://bridge.example/ap/object/did%3Aplc%3Abob/root9"
   );
 });
+
+test("JetstreamProcessor maps repost create to Announce activity", () => {
+  const { store, queue, processor } = createProcessorFixture();
+
+  store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/a1",
+    inboxUrl: "https://remote.example/users/a1/inbox"
+  });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 904,
+    commit: {
+      collection: "app.bsky.feed.repost",
+      operation: "create",
+      rkey: "rp1",
+      record: {
+        createdAt: "2026-03-04T00:00:00.000Z",
+        subject: {
+          uri: "at://did:plc:bob/app.bsky.feed.post/post9",
+          cid: "cid-1"
+        }
+      }
+    }
+  });
+
+  assert.equal(result.status, "enqueued");
+  const queued = queue.list()[0];
+  assert.equal(queued.activity.type, "Announce");
+  assert.equal(queued.activity.object, "https://bridge.example/ap/object/did%3Aplc%3Abob/post9");
+
+  const cached = store.getObjectByRkey("did:plc:alice", "app.bsky.feed.repost:rp1");
+  assert.equal(cached?.activity?.type, "Announce");
+});
+
+test("JetstreamProcessor maps repost delete to Delete activity", () => {
+  const { store, queue, processor } = createProcessorFixture();
+
+  store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/a1",
+    inboxUrl: "https://remote.example/users/a1/inbox"
+  });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 905,
+    commit: {
+      collection: "app.bsky.feed.repost",
+      operation: "delete",
+      rkey: "rp2"
+    }
+  });
+
+  assert.equal(result.status, "enqueued");
+  const queued = queue.list()[0];
+  assert.equal(queued.activity.type, "Delete");
+  assert.equal(queued.activity.object, "https://bridge.example/ap/object/did%3Aplc%3Aalice/repost%3Arp2");
+});

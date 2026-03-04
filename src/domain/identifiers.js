@@ -67,6 +67,10 @@ export function actorFollowersId(baseUrl, did) {
   return `${actorId(baseUrl, did)}/followers`;
 }
 
+export function actorFeaturedId(baseUrl, did) {
+  return `${actorId(baseUrl, did)}/featured`;
+}
+
 export function objectId(baseUrl, did, rkey) {
   return `${baseUrl}/ap/object/${encodeDidForPath(did)}/${encodeURIComponent(rkey)}`;
 }

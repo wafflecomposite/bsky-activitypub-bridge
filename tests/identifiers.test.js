@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  actorFeaturedId,
   actorId,
   decodeDidFromPath,
   encodeDidForPath,
@@ -36,5 +37,6 @@ test("actorId and webfingerSubject are deterministic", () => {
   const did = "did:plc:abc123";
 
   assert.equal(actorId("https://bridge.example", did), "https://bridge.example/ap/actor/did%3Aplc%3Aabc123");
+  assert.equal(actorFeaturedId("https://bridge.example", did), "https://bridge.example/ap/actor/did%3Aplc%3Aabc123/featured");
   assert.equal(webfingerSubject("alice.bsky.social", "bridge.example"), "acct:alice.bsky.social@bridge.example");
 });

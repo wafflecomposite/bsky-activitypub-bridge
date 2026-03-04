@@ -44,6 +44,10 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   assert.equal(actorRes.status, 200);
   assert.equal(actorRes.body.type, "Person");
   assert.equal(actorRes.body.preferredUsername, "alice.bsky.social");
+  assert.equal(actorRes.body.bot, true);
+  assert.equal(typeof actorRes.body.summary, "string");
+  assert.equal(actorRes.body.summary.includes("Bridged by https://bridge.example"), true);
+  assert.equal(actorRes.body.featured, "https://bridge.example/ap/actor/did%3Aplc%3Aalice/featured");
 
   const outboxRes = await dispatchBridgeRequest({
     method: "GET",
@@ -198,12 +202,56 @@ test("dispatchBridgeRequest serves object and outbox from cached activities", as
   assert.equal(deletedRes.body.type, "Tombstone");
 });
 
+test("dispatchBridgeRequest can materialize uncached object on demand", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social"
+  });
+
+  const objectRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/object/did%3Aplc%3Aalice/late1",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      assert.equal(
+        url,
+        "https://public.api.bsky.app/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aalice&collection=app.bsky.feed.post&rkey=late1"
+      );
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          uri: "at://did:plc:alice/app.bsky.feed.post/late1",
+          cid: "cid-late",
+          value: {
+            $type: "app.bsky.feed.post",
+            text: "late fetched",
+            createdAt: "2026-03-04T00:00:00.000Z"
+          }
+        })
+      };
+    }
+  });
+
+  assert.equal(objectRes.status, 200);
+  assert.equal(objectRes.body.content, "late fetched");
+  const cached = store.getObjectByRkey("did:plc:alice", "late1");
+  assert.equal(cached?.object?.content, "late fetched");
+});
+
 test("dispatchBridgeRequest can auto-materialize actor on WebFinger lookup", async () => {
   const baseUrl = "https://bridge.example";
   const store = new InMemoryBridgeStore();
   const keyManager = new InMemoryKeyManager();
 
-  let resolveCalls = 0;
+  const requestedUrls = [];
   const webfingerRes = await dispatchBridgeRequest({
     method: "GET",
     rawUrl: "/.well-known/webfinger?resource=acct:autoalice.bsky.social@bridge.example",
@@ -212,25 +260,291 @@ test("dispatchBridgeRequest can auto-materialize actor on WebFinger lookup", asy
     keyManager,
     baseUrl,
     fetchImpl: async (url) => {
-      resolveCalls += 1;
+      requestedUrls.push(url);
+      if (url.includes("/com.atproto.identity.resolveHandle")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:autoalice123"
+          })
+        };
+      }
+
+      if (url.includes("/app.bsky.actor.getProfile")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:autoalice123",
+            handle: "autoalice.bsky.social",
+            displayName: "Auto Alice",
+            description: "bridged profile",
+            avatar: "https://cdn.example/avatar.jpg",
+            banner: "https://cdn.example/banner.jpg"
+          })
+        };
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }
+  });
+
+  assert.equal(requestedUrls.some((url) => url.includes("/com.atproto.identity.resolveHandle")), true);
+  assert.equal(requestedUrls.some((url) => url.includes("/app.bsky.actor.getProfile")), true);
+  assert.equal(webfingerRes.status, 200);
+  assert.equal(webfingerRes.body.subject, "acct:autoalice.bsky.social@bridge.example");
+  assert.equal(store.resolveDidByHandle("autoalice.bsky.social"), "did:plc:autoalice123");
+  const actor = store.getActorByDid("did:plc:autoalice123");
+  assert.equal(actor.displayName, "Auto Alice");
+  assert.equal(actor.avatarUrl, "https://cdn.example/avatar.jpg");
+  assert.equal(actor.bannerUrl, "https://cdn.example/banner.jpg");
+});
+
+test("dispatchBridgeRequest serves discovery frontpage", async () => {
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/",
+    headers: { host: "bridge.example" },
+    store: new InMemoryBridgeStore(),
+    keyManager: new InMemoryKeyManager(),
+    baseUrl: "https://bridge.example"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.contentType, "text/html");
+  assert.equal(typeof response.body, "string");
+  assert.equal(response.body.includes("Bluesky Bridge Resolver"), true);
+  assert.equal(response.body.includes("<form"), true);
+});
+
+test("dispatchBridgeRequest resolves actor discovery query and materializes actor", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+  const requestedUrls = [];
+
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/?q=%40autoalice.bsky.social",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      requestedUrls.push(url);
+      if (url.includes("/com.atproto.identity.resolveHandle")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:autoalice123"
+          })
+        };
+      }
+
+      if (url.includes("/app.bsky.actor.getProfile")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:autoalice123",
+            handle: "autoalice.bsky.social"
+          })
+        };
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.contentType, "text/html");
+  assert.equal(response.body.includes("autoalice.bsky.social@bridge.example"), true);
+  assert.equal(response.body.includes("https://bridge.example/ap/actor/did%3Aplc%3Aautoalice123"), true);
+  assert.equal(requestedUrls.some((url) => url.includes("/com.atproto.identity.resolveHandle")), true);
+  assert.equal(requestedUrls.some((url) => url.includes("/app.bsky.actor.getProfile")), true);
+});
+
+test("dispatchBridgeRequest resolves post discovery query and materializes object", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/?q=https%3A%2F%2Fbsky.app%2Fprofile%2Fautoalice.bsky.social%2Fpost%2Flate1",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      if (url.includes("/com.atproto.identity.resolveHandle")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:autoalice123"
+          })
+        };
+      }
+
+      if (url.includes("/app.bsky.actor.getProfile")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:autoalice123",
+            handle: "autoalice.bsky.social"
+          })
+        };
+      }
+
+      if (url.includes("/com.atproto.repo.getRecord")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            uri: "at://did:plc:autoalice123/app.bsky.feed.post/late1",
+            cid: "cid-late",
+            value: {
+              $type: "app.bsky.feed.post",
+              text: "late fetched via frontpage",
+              createdAt: "2026-03-04T00:00:00.000Z"
+            }
+          })
+        };
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.contentType, "text/html");
+  assert.equal(response.body.includes("https://bridge.example/ap/object/did%3Aplc%3Aautoalice123/late1"), true);
+  const cached = store.getObjectByRkey("did:plc:autoalice123", "late1");
+  assert.equal(cached?.object?.content, "late fetched via frontpage");
+});
+
+test("dispatchBridgeRequest can auto-materialize actor by DID on actor endpoint", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  const actorRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aautodid123",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
       assert.equal(
         url,
-        "https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=autoalice.bsky.social"
+        "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=did%3Aplc%3Aautodid123"
       );
-
       return {
         status: 200,
+        ok: true,
         json: async () => ({
-          did: "did:plc:autoalice123"
+          did: "did:plc:autodid123",
+          handle: "autodid.bsky.social",
+          description: "auto did profile"
         })
       };
     }
   });
 
-  assert.equal(resolveCalls, 1);
-  assert.equal(webfingerRes.status, 200);
-  assert.equal(webfingerRes.body.subject, "acct:autoalice.bsky.social@bridge.example");
-  assert.equal(store.resolveDidByHandle("autoalice.bsky.social"), "did:plc:autoalice123");
+  assert.equal(actorRes.status, 200);
+  assert.equal(actorRes.body.preferredUsername, "autodid.bsky.social");
+  assert.equal(store.resolveDidByHandle("autodid.bsky.social"), "did:plc:autodid123");
+});
+
+test("dispatchBridgeRequest hydrates seeded actor profile on first actor read", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertActor({
+    did: "did:plc:seeded123",
+    handle: "seeded.bsky.social"
+  });
+
+  const actorRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aseeded123",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      assert.equal(
+        url,
+        "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=did%3Aplc%3Aseeded123"
+      );
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          did: "did:plc:seeded123",
+          handle: "seeded.bsky.social",
+          displayName: "Seeded User",
+          avatar: "https://cdn.example/seeded-avatar.jpg"
+        })
+      };
+    }
+  });
+
+  assert.equal(actorRes.status, 200);
+  assert.equal(actorRes.body.name, "Seeded User");
+  assert.equal(actorRes.body.icon.url, "https://cdn.example/seeded-avatar.jpg");
+  const updatedActor = store.getActorByDid("did:plc:seeded123");
+  assert.equal(typeof updatedActor.profileFetchedAt, "string");
+});
+
+test("dispatchBridgeRequest serves featured collection from pinned post", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    pinnedPostUri: "at://did:plc:alice/app.bsky.feed.post/pinned1"
+  });
+
+  const featuredRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/featured",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      assert.equal(
+        url,
+        "https://public.api.bsky.app/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aalice&collection=app.bsky.feed.post&rkey=pinned1"
+      );
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          uri: "at://did:plc:alice/app.bsky.feed.post/pinned1",
+          cid: "cid1",
+          value: {
+            $type: "app.bsky.feed.post",
+            text: "pinned post",
+            createdAt: "2026-03-04T00:00:00.000Z"
+          }
+        })
+      };
+    }
+  });
+
+  assert.equal(featuredRes.status, 200);
+  assert.equal(featuredRes.body.totalItems, 1);
+  assert.equal(featuredRes.body.orderedItems[0].content, "pinned post");
 });
 
 test("dispatchBridgeRequest resolves remote actor and queues Accept delivery", async () => {

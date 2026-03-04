@@ -261,7 +261,7 @@ test("mapBskyPostToActivityPub maps recordWithMedia embeds", () => {
   assert.equal(result.note.attachment.length, 2);
   assert.deepEqual(result.note.attachment[0], {
     type: "Link",
-    url: "https://bsky.app/profile/did:plc:bob/post/root7"
+    url: "https://bridge.example/ap/object/did%3Aplc%3Abob/root7"
   });
   assert.deepEqual(result.note.attachment[1], {
     type: "Document",

@@ -4,11 +4,32 @@ import { buildActorDocument } from "./ap/actor.js";
 import { processInboxActivity } from "./ap/follow.js";
 import { resolveFollowerEndpoints } from "./ap/remote-actor.js";
 import { resolveWebFingerResource } from "./ap/webfinger.js";
+import { getPostRecord, getProfile, resolveHandleToDid } from "./bsky/public-api.js";
+import { mapBskyPostToActivityPub, parseAtPostUri } from "./bridge/post-mapper.js";
 import { InMemoryKeyManager } from "./crypto/key-manager.js";
-import { actorFollowersId, actorOutboxId, assertDid, decodeDidFromPath, objectId, parseAcctResource } from "./domain/identifiers.js";
+import { parseDiscoveryInput } from "./discovery/input-parser.js";
+import {
+  actorId,
+  actorFeaturedId,
+  actorFollowersId,
+  actorOutboxId,
+  decodeDidFromPath,
+  objectId,
+  parseAcctResource,
+  webfingerSubject
+} from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
 
-export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null, actorCache = null, inboxSignatureVerifier = null } = {}) {
+export function createBridgeServer({
+  baseUrl = null,
+  store = new InMemoryBridgeStore(),
+  keyManager = new InMemoryKeyManager(),
+  fetchImpl = fetch,
+  deliveryQueue = null,
+  actorCache = null,
+  inboxSignatureVerifier = null,
+  profileCacheMaxAgeMs = 60_000
+} = {}) {
   let publicBaseUrl = baseUrl;
 
   const server = http.createServer(async (req, res) => {
@@ -26,7 +47,8 @@ export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeS
         fetchImpl,
         deliveryQueue,
         actorCache,
-        inboxSignatureVerifier
+        inboxSignatureVerifier,
+        profileCacheMaxAgeMs
       });
 
       sendJsonResponse(res, response);
@@ -94,7 +116,20 @@ export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeS
   };
 }
 
-export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, bodyText = "", store, keyManager, baseUrl, fetchImpl = fetch, deliveryQueue = null, actorCache = null, inboxSignatureVerifier = null }) {
+export async function dispatchBridgeRequest({
+  method,
+  rawUrl,
+  headers = {},
+  bodyText = "",
+  store,
+  keyManager,
+  baseUrl,
+  fetchImpl = fetch,
+  deliveryQueue = null,
+  actorCache = null,
+  inboxSignatureVerifier = null,
+  profileCacheMaxAgeMs = 60_000
+}) {
   if (!baseUrl) {
     throw new Error("Public base URL is not configured");
   }
@@ -102,24 +137,38 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
   const host = headers.host ?? new URL(baseUrl).host;
   const url = new URL(rawUrl, `http://${host}`);
 
+  if (method === "GET" && url.pathname === "/") {
+    return handleDiscoveryFrontpage({
+      url,
+      store,
+      publicBaseUrl: baseUrl,
+      fetchImpl,
+      profileCacheMaxAgeMs
+    });
+  }
+
   if (method === "GET" && url.pathname === "/.well-known/webfinger") {
-    return handleWebFinger({ url, store, publicBaseUrl: baseUrl, fetchImpl });
+    return handleWebFinger({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
   }
 
   if (method === "GET" && url.pathname.startsWith("/ap/actor/")) {
     if (url.pathname.endsWith("/followers")) {
-      return handleGetFollowers({ url, store, publicBaseUrl: baseUrl });
+      return handleGetFollowers({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
     }
 
     if (url.pathname.endsWith("/outbox")) {
-      return handleGetOutbox({ url, store, publicBaseUrl: baseUrl });
+      return handleGetOutbox({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
     }
 
-    return handleGetActor({ url, store, keyManager, publicBaseUrl: baseUrl });
+    if (url.pathname.endsWith("/featured")) {
+      return handleGetFeatured({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
+    }
+
+    return handleGetActor({ url, store, keyManager, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
   }
 
   if (method === "GET" && url.pathname.startsWith("/ap/object/")) {
-    return handleGetObject({ url, store, publicBaseUrl: baseUrl });
+    return handleGetObject({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
   }
 
   if (method === "POST" && url.pathname.startsWith("/ap/actor/") && url.pathname.endsWith("/inbox")) {
@@ -133,7 +182,57 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
   };
 }
 
-async function handleWebFinger({ url, store, publicBaseUrl, fetchImpl }) {
+async function handleDiscoveryFrontpage({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
+  const query = url.searchParams.get("q") ?? "";
+  const trimmed = query.trim();
+
+  if (!trimmed) {
+    return {
+      status: 200,
+      contentType: "text/html",
+      body: renderDiscoveryFrontpage({
+        publicBaseUrl,
+        input: "",
+        result: null,
+        error: null
+      })
+    };
+  }
+
+  try {
+    const result = await resolveDiscoveryQuery({
+      query: trimmed,
+      store,
+      publicBaseUrl,
+      fetchImpl,
+      profileCacheMaxAgeMs
+    });
+
+    return {
+      status: 200,
+      contentType: "text/html",
+      body: renderDiscoveryFrontpage({
+        publicBaseUrl,
+        input: trimmed,
+        result,
+        error: null
+      })
+    };
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "text/html",
+      body: renderDiscoveryFrontpage({
+        publicBaseUrl,
+        input: trimmed,
+        result: null,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    };
+  }
+}
+
+async function handleWebFinger({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
   const resource = url.searchParams.get("resource");
   if (!resource) {
     return {
@@ -155,23 +254,12 @@ async function handleWebFinger({ url, store, publicBaseUrl, fetchImpl }) {
     };
   }
 
-  if (!store.resolveDidByHandle(parsed.handle)) {
-    const resolvedDid = await resolveDidByHandle({
-      handle: parsed.handle,
-      fetchImpl
-    });
-
-    if (resolvedDid) {
-      try {
-        store.upsertActor({
-          did: resolvedDid,
-          handle: parsed.handle
-        });
-      } catch {
-        // Ignore malformed upstream data and fall back to unresolved result.
-      }
-    }
-  }
+  await ensureActorProfile({
+    store,
+    fetchImpl,
+    handle: parsed.handle,
+    cacheMaxAgeMs: profileCacheMaxAgeMs
+  });
 
   let response;
   try {
@@ -204,42 +292,7 @@ async function handleWebFinger({ url, store, publicBaseUrl, fetchImpl }) {
   };
 }
 
-async function resolveDidByHandle({ handle, fetchImpl }) {
-  let response;
-  try {
-    response = await fetchImpl(`https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`, {
-      method: "GET",
-      headers: {
-        accept: "application/json"
-      }
-    });
-  } catch {
-    return null;
-  }
-
-  if (!response || response.status < 200 || response.status >= 300) {
-    return null;
-  }
-
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    return null;
-  }
-
-  if (typeof body?.did !== "string") {
-    return null;
-  }
-
-  try {
-    return assertDid(body.did);
-  } catch {
-    return null;
-  }
-}
-
-function handleGetActor({ url, store, keyManager, publicBaseUrl }) {
+async function handleGetActor({ url, store, keyManager, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length);
@@ -252,7 +305,12 @@ function handleGetActor({ url, store, keyManager, publicBaseUrl }) {
     };
   }
 
-  const profile = store.getActorByDid(did);
+  const profile = await ensureActorProfile({
+    store,
+    fetchImpl,
+    did,
+    cacheMaxAgeMs: profileCacheMaxAgeMs
+  });
 
   if (!profile) {
     return {
@@ -276,7 +334,7 @@ function handleGetActor({ url, store, keyManager, publicBaseUrl }) {
   };
 }
 
-function handleGetFollowers({ url, store, publicBaseUrl }) {
+async function handleGetFollowers({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length, -"/followers".length);
@@ -289,7 +347,14 @@ function handleGetFollowers({ url, store, publicBaseUrl }) {
     };
   }
 
-  if (!store.getActorByDid(did)) {
+  const actor = await ensureActorProfile({
+    store,
+    fetchImpl,
+    did,
+    cacheMaxAgeMs: profileCacheMaxAgeMs
+  });
+
+  if (!actor) {
     return {
       status: 404,
       contentType: "application/json",
@@ -313,7 +378,7 @@ function handleGetFollowers({ url, store, publicBaseUrl }) {
   };
 }
 
-function handleGetOutbox({ url, store, publicBaseUrl }) {
+async function handleGetOutbox({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length, -"/outbox".length);
@@ -326,7 +391,14 @@ function handleGetOutbox({ url, store, publicBaseUrl }) {
     };
   }
 
-  if (!store.getActorByDid(did)) {
+  const actor = await ensureActorProfile({
+    store,
+    fetchImpl,
+    did,
+    cacheMaxAgeMs: profileCacheMaxAgeMs
+  });
+
+  if (!actor) {
     return {
       status: 404,
       contentType: "application/json",
@@ -352,7 +424,64 @@ function handleGetOutbox({ url, store, publicBaseUrl }) {
   };
 }
 
-function handleGetObject({ url, store, publicBaseUrl }) {
+async function handleGetFeatured({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
+  let did;
+  try {
+    const didPath = url.pathname.slice("/ap/actor/".length, -"/featured".length);
+    did = decodeDidFromPath(didPath);
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: error.message }
+    };
+  }
+
+  const actor = await ensureActorProfile({
+    store,
+    fetchImpl,
+    did,
+    cacheMaxAgeMs: profileCacheMaxAgeMs
+  });
+
+  if (!actor) {
+    return {
+      status: 404,
+      contentType: "application/json",
+      body: { error: "Bridge actor not found" }
+    };
+  }
+
+  const featuredItems = [];
+  const pinned = parseAtPostUri(actor.pinnedPostUri);
+  if (pinned) {
+    const record = await ensurePostRecord({
+      store,
+      fetchImpl,
+      baseUrl: publicBaseUrl,
+      did: pinned.did,
+      rkey: pinned.rkey
+    });
+
+    if (record?.object) {
+      featuredItems.push(record.object);
+    }
+  }
+
+  return {
+    status: 200,
+    contentType: "application/activity+json",
+    body: {
+      "@context": "https://www.w3.org/ns/activitystreams",
+      id: actorFeaturedId(publicBaseUrl, did),
+      type: "OrderedCollection",
+      totalItems: featuredItems.length,
+      orderedItems: featuredItems
+    }
+  };
+}
+
+async function handleGetObject({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
   const match = /^\/ap\/object\/([^/]+)\/([^/]+)$/.exec(url.pathname);
   if (!match) {
     return {
@@ -375,7 +504,14 @@ function handleGetObject({ url, store, publicBaseUrl }) {
     };
   }
 
-  if (!store.getActorByDid(did)) {
+  const actor = await ensureActorProfile({
+    store,
+    fetchImpl,
+    did,
+    cacheMaxAgeMs: profileCacheMaxAgeMs
+  });
+
+  if (!actor) {
     return {
       status: 404,
       contentType: "application/json",
@@ -383,9 +519,19 @@ function handleGetObject({ url, store, publicBaseUrl }) {
     };
   }
 
-  const record = typeof store.getObjectByRkey === "function"
+  let record = typeof store.getObjectByRkey === "function"
     ? store.getObjectByRkey(did, rkey)
     : null;
+
+  if (!record) {
+    record = await ensurePostRecord({
+      store,
+      fetchImpl,
+      baseUrl: publicBaseUrl,
+      did,
+      rkey
+    });
+  }
 
   if (!record) {
     return {
@@ -413,6 +559,298 @@ function handleGetObject({ url, store, publicBaseUrl }) {
     contentType: "application/activity+json",
     body: record.object
   };
+}
+
+async function ensureActorProfile({ store, fetchImpl, did = null, handle = null, cacheMaxAgeMs = 60_000 }) {
+  const now = Date.now();
+  let existing = null;
+
+  if (did) {
+    existing = store.getActorByDid(did);
+  } else if (handle) {
+    const resolvedDid = store.resolveDidByHandle(handle);
+    existing = resolvedDid ? store.getActorByDid(resolvedDid) : null;
+  }
+
+  if (existing && !isActorStale(existing, now, cacheMaxAgeMs)) {
+    return existing;
+  }
+
+  let actorRefDid = did;
+  try {
+    if (!actorRefDid && handle) {
+      actorRefDid = await resolveHandleToDid({ handle, fetchImpl });
+    }
+  } catch {
+    return existing;
+  }
+
+  if (!actorRefDid && existing?.did) {
+    actorRefDid = existing.did;
+  }
+
+  if (!actorRefDid) {
+    return existing;
+  }
+
+  let profile;
+  try {
+    profile = await getProfile({ actor: actorRefDid, fetchImpl });
+  } catch {
+    return existing;
+  }
+
+  try {
+    return store.upsertActor({
+      did: profile.did,
+      handle: profile.handle ?? handle ?? existing?.handle,
+      displayName: profile.displayName,
+      summary: profile.description,
+      avatarUrl: profile.avatarUrl,
+      bannerUrl: profile.bannerUrl,
+      pinnedPostUri: profile.pinnedPostUri,
+      profileFetchedAt: new Date().toISOString()
+    });
+  } catch {
+    return existing;
+  }
+}
+
+async function ensurePostRecord({ store, fetchImpl, baseUrl, did, rkey }) {
+  if (typeof store.getObjectByRkey === "function") {
+    const cached = store.getObjectByRkey(did, rkey);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  let record;
+  try {
+    record = await getPostRecord({ did, rkey, fetchImpl });
+  } catch {
+    return null;
+  }
+
+  const mapped = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey,
+    record: record.value,
+    visibility: "unlisted",
+    resolveReplyObjectId: (replyDid, replyRkey) => {
+      const cached = typeof store.getObjectByRkey === "function"
+        ? store.getObjectByRkey(replyDid, replyRkey)
+        : null;
+
+      return cached && !cached.deleted ? objectId(baseUrl, replyDid, replyRkey) : null;
+    }
+  });
+
+  if (typeof store.upsertObjectActivity !== "function") {
+    return {
+      object: mapped.note,
+      activity: mapped.create,
+      deleted: false
+    };
+  }
+
+  return store.upsertObjectActivity({
+    did,
+    rkey,
+    operation: "create",
+    object: mapped.note,
+    activity: mapped.create,
+    cursor: null
+  });
+}
+
+async function resolveDiscoveryQuery({
+  query,
+  store,
+  publicBaseUrl,
+  fetchImpl,
+  profileCacheMaxAgeMs
+}) {
+  const parsed = parseDiscoveryInput(query);
+  const bridgeHost = new URL(publicBaseUrl).host;
+
+  if (parsed.kind === "actor") {
+    const profile = await ensureActorProfile({
+      store,
+      fetchImpl,
+      did: parsed.did ?? null,
+      handle: parsed.handle ?? null,
+      cacheMaxAgeMs: profileCacheMaxAgeMs
+    });
+
+    if (!profile) {
+      throw new Error("Unable to resolve actor");
+    }
+
+    return {
+      kind: "actor",
+      did: profile.did,
+      handle: profile.handle,
+      actorUrl: actorId(publicBaseUrl, profile.did),
+      acct: `${profile.handle}@${bridgeHost}`,
+      webfinger: webfingerSubject(profile.handle, bridgeHost)
+    };
+  }
+
+  if (parsed.kind === "post") {
+    const actorProfile = parsed.did
+      ? await ensureActorProfile({
+        store,
+        fetchImpl,
+        did: parsed.did,
+        cacheMaxAgeMs: profileCacheMaxAgeMs
+      })
+      : await ensureActorProfile({
+        store,
+        fetchImpl,
+        handle: parsed.handle,
+        cacheMaxAgeMs: profileCacheMaxAgeMs
+      });
+
+    if (!actorProfile) {
+      throw new Error("Unable to resolve post author");
+    }
+
+    const record = await ensurePostRecord({
+      store,
+      fetchImpl,
+      baseUrl: publicBaseUrl,
+      did: actorProfile.did,
+      rkey: parsed.rkey
+    });
+
+    if (!record?.object) {
+      throw new Error("Unable to resolve post");
+    }
+
+    return {
+      kind: "post",
+      did: actorProfile.did,
+      handle: actorProfile.handle,
+      rkey: parsed.rkey,
+      postUrl: objectId(publicBaseUrl, actorProfile.did, parsed.rkey),
+      actorUrl: actorId(publicBaseUrl, actorProfile.did),
+      acct: `${actorProfile.handle}@${bridgeHost}`,
+      webfinger: webfingerSubject(actorProfile.handle, bridgeHost)
+    };
+  }
+
+  throw new Error("Unsupported discovery target");
+}
+
+function isActorStale(actor, nowMs, maxAgeMs) {
+  const profileFreshnessIso = readProfileFreshnessTimestamp(actor);
+  if (!profileFreshnessIso) {
+    return true;
+  }
+
+  const updatedAt = Date.parse(profileFreshnessIso);
+  if (!Number.isFinite(updatedAt)) {
+    return true;
+  }
+
+  return (nowMs - updatedAt) > maxAgeMs;
+}
+
+function readProfileFreshnessTimestamp(actor) {
+  if (!actor || typeof actor !== "object") {
+    return null;
+  }
+
+  if (typeof actor.profileFetchedAt === "string" && actor.profileFetchedAt) {
+    return actor.profileFetchedAt;
+  }
+
+  const hasProfileSignals = actor.displayName != null
+    || actor.summary != null
+    || actor.avatarUrl != null
+    || actor.bannerUrl != null
+    || actor.pinnedPostUri != null;
+
+  if (hasProfileSignals && typeof actor.updatedAt === "string" && actor.updatedAt) {
+    return actor.updatedAt;
+  }
+
+  return null;
+}
+
+function renderDiscoveryFrontpage({ publicBaseUrl, input, result, error }) {
+  const escapedInput = escapeHtml(input ?? "");
+  const escapedBaseUrl = escapeHtml(publicBaseUrl);
+  const resultHtml = renderDiscoveryResult(result, error);
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bluesky Bridge Resolver</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #f8fafc; color: #0f172a; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px 40px; }
+    h1 { margin: 0 0 8px; font-size: 1.35rem; }
+    p { margin: 0 0 12px; line-height: 1.4; }
+    .box { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 14px; }
+    form { display: flex; gap: 8px; margin-bottom: 10px; }
+    input[type="text"] { flex: 1; border: 1px solid #94a3b8; border-radius: 8px; font: inherit; padding: 10px 12px; }
+    button { border: 1px solid #0f172a; background: #0f172a; color: #fff; border-radius: 8px; font: inherit; padding: 10px 14px; cursor: pointer; }
+    code { background: #f1f5f9; padding: 2px 6px; border-radius: 6px; }
+    ul { margin: 10px 0 0; padding-left: 18px; }
+    li { margin: 6px 0; }
+    .error { color: #b91c1c; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Bluesky Bridge Resolver</h1>
+    <p>Paste a Bluesky user or post and copy the bridge URL/account for Mastodon or GtS search.</p>
+    <div class="box">
+      <form method="get" action="/">
+        <input type="text" name="q" value="${escapedInput}" placeholder="mouseu.bsky.social or https://bsky.app/profile/.../post/..." autocomplete="off">
+        <button type="submit">Resolve</button>
+      </form>
+      <p>Bridge base: <code>${escapedBaseUrl}</code></p>
+      ${resultHtml}
+    </div>
+  </main>
+</body>
+</html>`;
+}
+
+function renderDiscoveryResult(result, error) {
+  if (error) {
+    return `<p class="error">Unable to resolve input: ${escapeHtml(error)}</p>`;
+  }
+
+  if (!result) {
+    return `<p>Supported input examples: <code>mouseu.bsky.social</code>, <code>@mouseu.bsky.social</code>, <code>https://bsky.app/profile/did:...</code>, <code>https://bsky.app/profile/<id>/post/<rkey></code>.</p>`;
+  }
+
+  if (result.kind === "actor") {
+    return `<p>Actor resolved. Use either value in instance search:</p>
+<ul>
+  <li>Search acct: <code>${escapeHtml(result.acct)}</code></li>
+  <li>Actor URL: <code>${escapeHtml(result.actorUrl)}</code></li>
+  <li>WebFinger: <code>${escapeHtml(result.webfinger)}</code></li>
+</ul>`;
+  }
+
+  if (result.kind === "post") {
+    return `<p>Post resolved. Use post URL in instance search:</p>
+<ul>
+  <li>Post URL: <code>${escapeHtml(result.postUrl)}</code></li>
+  <li>Author acct: <code>${escapeHtml(result.acct)}</code></li>
+  <li>Author URL: <code>${escapeHtml(result.actorUrl)}</code></li>
+</ul>`;
+  }
+
+  return "";
 }
 
 async function handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier }) {
@@ -556,12 +994,23 @@ async function readRawBody(req) {
 }
 
 function sendJsonResponse(res, response) {
-  const data = JSON.stringify(response.body);
+  const data = typeof response.body === "string"
+    ? response.body
+    : JSON.stringify(response.body);
   res.writeHead(response.status, {
     "content-type": `${response.contentType}; charset=utf-8`,
     "content-length": Buffer.byteLength(data)
   });
   res.end(data);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function parseCollectionLimit(value, fallback) {

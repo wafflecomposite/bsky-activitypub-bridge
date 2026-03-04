@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { createBridgeApplication } from "../app/application.js";
+import { getProfile } from "../bsky/public-api.js";
 
 const DEFAULT_DID = "did:plc:ct7l6fgjtseazmaunhzrbydz";
 
@@ -64,6 +65,12 @@ export async function runLiveE2EHarness({
     await app.start({ host: "127.0.0.1", port });
 
     await waitForBridgeReady({ port, did, timeoutMs: 90_000 });
+    const bridgeActorProfile = await verifyBridgeActorProfile({
+      tunnelUrl,
+      port,
+      did,
+      blueskyIdentifier: resolvedCredentials.blueskyIdentifier
+    });
 
     const remoteAcct = `${resolvedCredentials.blueskyIdentifier}@${new URL(tunnelUrl).host}`;
     const discovered = await discoverRemoteAccountWithRetry({
@@ -94,6 +101,7 @@ export async function runLiveE2EHarness({
         enabled: true,
         autoFollowedDids: false,
         wantedDids: [did],
+        wantedCollections: ["app.bsky.feed.post", "app.bsky.feed.repost"],
         wantedDidsRefreshMs: 0
       },
       delivery: {
@@ -163,14 +171,41 @@ export async function runLiveE2EHarness({
       timeoutMs: 90_000,
       log
     });
+    const postedRepost = await createBlueskyRepost({
+      identifier: resolvedCredentials.blueskyIdentifier,
+      appPassword: resolvedCredentials.blueskyAppPassword,
+      subjectUri: postedThread.root.uri,
+      subjectCid: postedThread.root.cid
+    });
+
+    const bridgeRepost = await waitForBridgeRepostActivity({
+      tunnelUrl,
+      did,
+      rootDid: did,
+      rootRkey: rootRkey,
+      timeoutMs: 90_000,
+      log
+    });
+    await waitForQueueDepthZero({
+      runtime: app.getRuntime(),
+      timeoutMs: 90_000,
+      log
+    });
     const runtimeMetrics = app.getRuntime()?.getMetrics() ?? null;
 
     const summary = {
       ok: followState.following === true
+        && bridgeActorProfile.bot === true
+        && bridgeActorProfile.featuredCollection === true
+        && bridgeActorProfile.summaryHasBridgeNotice === true
+        && bridgeActorProfile.avatarMatches === true
+        && bridgeActorProfile.bannerMatches === true
+        && bridgeActorProfile.summaryContainsDescription === true
         && timelineThread.threadLinked === true
         && bridgeReadSurface.ok === true
         && timelineMedia.hasMediaAttachment === true
         && bridgeMediaObject.hasAttachment === true
+        && bridgeRepost.found === true
         && (runtimeMetrics?.delivery?.delivered ?? 0) >= 3,
       tunnelUrl,
       dataDir: tempDir,
@@ -178,12 +213,15 @@ export async function runLiveE2EHarness({
       did,
       discovered,
       followState,
+      bridgeActorProfile,
       postedThread,
       timelineThread,
       bridgeReadSurface,
       postedMedia,
       timelineMedia,
       bridgeMediaObject,
+      postedRepost,
+      bridgeRepost,
       runtimeMetrics
     };
 
@@ -346,6 +384,49 @@ async function waitForBridgeReady({ port, did, timeoutMs }) {
   }, timeoutMs, 1_000);
 }
 
+async function verifyBridgeActorProfile({ tunnelUrl, port, did, blueskyIdentifier }) {
+  const localBaseUrl = `http://127.0.0.1:${port}`;
+  const actorUrl = `${localBaseUrl}/ap/actor/${encodeURIComponent(did)}`;
+  const featuredUrl = `${localBaseUrl}/ap/actor/${encodeURIComponent(did)}/featured`;
+
+  const actorResponse = await retryFetch(() => fetch(actorUrl), 15, 500);
+  if (!actorResponse.ok) {
+    throw new Error(`Bridge actor endpoint not available: ${actorResponse.status}`);
+  }
+
+  const actor = await actorResponse.json();
+  const featuredResponse = await retryFetch(() => fetch(featuredUrl), 15, 500);
+  if (!featuredResponse.ok) {
+    throw new Error(`Bridge featured endpoint not available: ${featuredResponse.status}`);
+  }
+
+  const featured = await featuredResponse.json();
+  const upstream = await retryFetch(
+    () => getProfile({ actor: blueskyIdentifier }),
+    6,
+    1000
+  );
+
+  const avatarMatches = upstream.avatarUrl
+    ? areEquivalentMediaUrls(actor?.icon?.url, upstream.avatarUrl)
+    : true;
+  const bannerMatches = upstream.bannerUrl
+    ? areEquivalentMediaUrls(actor?.image?.url, upstream.bannerUrl)
+    : true;
+  const summaryContainsDescription = upstream.description
+    ? String(actor?.summary ?? "").includes(upstream.description)
+    : true;
+
+  return {
+    bot: actor?.bot === true,
+    featuredCollection: featured?.type === "OrderedCollection",
+    summaryHasBridgeNotice: String(actor?.summary ?? "").includes(`Bridged by ${tunnelUrl}`),
+    avatarMatches,
+    bannerMatches,
+    summaryContainsDescription
+  };
+}
+
 async function discoverRemoteAccountWithRetry({ instanceUrl, accessToken, remoteAcct, timeoutMs, log }) {
   const startedAt = Date.now();
 
@@ -504,6 +585,40 @@ async function createBlueskyImagePost({ identifier, appPassword, textPrefix, ima
 
   return {
     marker,
+    uri: created.uri,
+    cid: created.cid
+  };
+}
+
+async function createBlueskyRepost({ identifier, appPassword, subjectUri, subjectCid }) {
+  const session = await createBlueskySession({ identifier, appPassword });
+  const nowIso = new Date().toISOString();
+  const createResponse = await fetch("https://bsky.social/xrpc/com.atproto.repo.createRecord", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${session.accessJwt}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      repo: session.did,
+      collection: "app.bsky.feed.repost",
+      record: {
+        $type: "app.bsky.feed.repost",
+        createdAt: nowIso,
+        subject: {
+          uri: subjectUri,
+          cid: subjectCid
+        }
+      }
+    })
+  });
+
+  if (!createResponse.ok) {
+    throw new Error(`Bluesky repost failed: ${createResponse.status}`);
+  }
+
+  const created = await createResponse.json();
+  return {
     uri: created.uri,
     cid: created.cid
   };
@@ -790,6 +905,41 @@ async function waitForBridgeMediaObject({ tunnelUrl, did, rkey, marker, timeoutM
   return last;
 }
 
+async function waitForBridgeRepostActivity({ tunnelUrl, did, rootDid, rootRkey, timeoutMs, log }) {
+  const startedAt = Date.now();
+  let last = {
+    found: false,
+    activityId: null
+  };
+
+  const outboxUrl = `${tunnelUrl}/ap/actor/${encodeURIComponent(did)}/outbox?limit=80`;
+  const expectedObject = `${tunnelUrl}/ap/object/${encodeURIComponent(rootDid)}/${encodeURIComponent(rootRkey)}`;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(outboxUrl);
+      const body = response.ok ? await response.json() : null;
+      const items = Array.isArray(body?.orderedItems) ? body.orderedItems : [];
+      const announce = items.find((activity) => activity?.type === "Announce" && activity?.object === expectedObject) ?? null;
+
+      last = {
+        found: announce !== null,
+        activityId: announce?.id ?? null
+      };
+
+      if (last.found) {
+        return last;
+      }
+    } catch (error) {
+      log(`bridge repost retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(2_000);
+  }
+
+  return last;
+}
+
 async function gtsApi({ instanceUrl, accessToken, path, method = "GET", timeoutMs = 30_000, body = null }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -957,4 +1107,55 @@ function inferMediaMimeType(path) {
   }
 
   return "application/octet-stream";
+}
+
+function areEquivalentMediaUrls(left, right) {
+  if (typeof right !== "string" || !right) {
+    return true;
+  }
+
+  if (typeof left !== "string" || !left) {
+    return false;
+  }
+
+  try {
+    const l = new URL(left);
+    const r = new URL(right);
+    return l.origin === r.origin && l.pathname === r.pathname;
+  } catch {
+    return left === right;
+  }
+}
+
+async function waitForQueueDepthZero({ runtime, timeoutMs, log }) {
+  if (!runtime || typeof runtime.getMetrics !== "function") {
+    return;
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const metrics = runtime.getMetrics();
+    if ((metrics?.queueDepth ?? 0) === 0) {
+      return;
+    }
+
+    log(`waiting for queue drain; depth=${metrics.queueDepth}`);
+    await sleep(1000);
+  }
+}
+
+async function retryFetch(fn, attempts, delayMs) {
+  let lastError = null;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (i < attempts - 1) {
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  throw lastError ?? new Error("retryFetch failed");
 }

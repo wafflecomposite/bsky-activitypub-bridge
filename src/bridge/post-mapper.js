@@ -40,7 +40,8 @@ export function mapBskyPostToActivityPub({
 
   const attachments = mapEmbedToAttachments({
     did,
-    embed: record.embed
+    embed: record.embed,
+    baseUrl
   });
   if (attachments.length > 0) {
     note.attachment = attachments;
@@ -236,7 +237,7 @@ function normalizeFacet(facet, totalBytes) {
   return null;
 }
 
-function mapEmbedToAttachments({ did, embed }) {
+function mapEmbedToAttachments({ did, embed, baseUrl }) {
   if (!embed || typeof embed !== "object") {
     return [];
   }
@@ -267,13 +268,13 @@ function mapEmbedToAttachments({ did, embed }) {
   }
 
   if (type === "app.bsky.embed.record") {
-    return mapRecordEmbed(embed);
+    return mapRecordEmbed({ embed, baseUrl });
   }
 
   if (type === "app.bsky.embed.recordWithMedia") {
     return [
-      ...mapEmbedToAttachments({ did, embed: embed.record }),
-      ...mapEmbedToAttachments({ did, embed: embed.media })
+      ...mapEmbedToAttachments({ did, embed: embed.record, baseUrl }),
+      ...mapEmbedToAttachments({ did, embed: embed.media, baseUrl })
     ];
   }
 
@@ -374,15 +375,20 @@ function mapVideoViewEmbed(embed) {
   }];
 }
 
-function mapRecordEmbed(embed) {
+function mapRecordEmbed({ embed, baseUrl }) {
   const uri = embed?.record?.uri ?? embed?.record?.record?.uri;
   if (typeof uri !== "string") {
     return [];
   }
 
+  const parsed = parseAtPostUri(uri);
+  const bridged = parsed
+    ? objectId(baseUrl, parsed.did, parsed.rkey)
+    : null;
+
   return [{
     type: "Link",
-    url: atUriToBskyWebUrl(uri) ?? uri
+    url: bridged ?? atUriToBskyWebUrl(uri) ?? uri
   }];
 }
 
@@ -467,7 +473,7 @@ function mapReplyUriToActivityPubReference({ uri, baseUrl, currentDid, resolveRe
   return uri;
 }
 
-function parseAtPostUri(uri) {
+export function parseAtPostUri(uri) {
   if (typeof uri !== "string") {
     return null;
   }

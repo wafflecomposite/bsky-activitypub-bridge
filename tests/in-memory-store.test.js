@@ -21,7 +21,12 @@ test("InMemoryBridgeStore lists followed DIDs", () => {
 
 test("InMemoryBridgeStore stores objects and exposes outbox activities", () => {
   const store = new InMemoryBridgeStore();
-  store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+  const actor = store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    pinnedPostUri: "at://did:plc:alice/app.bsky.feed.post/pin1"
+  });
+  assert.equal(actor.pinnedPostUri, "at://did:plc:alice/app.bsky.feed.post/pin1");
 
   store.upsertObjectActivity({
     did: "did:plc:alice",
@@ -62,4 +67,24 @@ test("InMemoryBridgeStore stores objects and exposes outbox activities", () => {
   const outbox = store.listOutboxActivities("did:plc:alice", { limit: 20 });
   assert.equal(outbox.length, 2);
   assert.equal(outbox[0].id, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post-2/activity/create");
+});
+
+test("InMemoryBridgeStore preserves profile fields on partial actor upsert", () => {
+  const store = new InMemoryBridgeStore();
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    displayName: "Alice",
+    avatarUrl: "https://cdn.bsky.app/avatar/alice.jpg",
+    profileFetchedAt: "2026-03-04T00:00:00.000Z"
+  });
+
+  const merged = store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social"
+  });
+
+  assert.equal(merged.displayName, "Alice");
+  assert.equal(merged.avatarUrl, "https://cdn.bsky.app/avatar/alice.jpg");
+  assert.equal(merged.profileFetchedAt, "2026-03-04T00:00:00.000Z");
 });

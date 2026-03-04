@@ -127,6 +127,16 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - runtime/env wiring (`ENABLE_HTTP_MESSAGE_SIGNATURES` and live harness toggle)
   - unit tests plus successful live validation with message signatures enabled
 - Added unit and integration-style tests for all implemented behavior.
+- Implemented bridge discovery frontpage workflow:
+  - added minimal `GET /` resolver page with single “anything goes” input
+  - accepts common Bluesky actor/post identifiers and URL variants (handles, DIDs, acct-style, profile/post URLs, bridge object URLs, AT URIs)
+  - returns canonical bridge search targets (remote acct, actor URL, post URL)
+  - triggers actor/profile and post materialization on demand during resolution
+- Completed bridged profile fidelity milestone:
+  - actor metadata fidelity (avatar/banner/description notice line + bot flag) with pinned-post featured collection support
+  - repost create/delete mapping to ActivityPub `Announce`/`Delete`
+  - quote post links and mention facets resolve to bridged ActivityPub object/actor URLs where resolvable
+  - actor freshness semantics hardened via `profileFetchedAt` to avoid seed records suppressing first profile hydration
 
 ## Verification Status
 - Test commands:
@@ -134,9 +144,9 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - `npm run e2e:local`
   - `npm run e2e:live`
 - Result:
-  - automated suite passing (26/26)
+  - automated suite passing (30/30)
   - local E2E harness succeeds
-  - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including reply linkage, bridge read-surface checks, and media attachment propagation
+  - live E2E CI harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including profile fidelity, replies/thread linkage, media propagation, repost propagation, and bridge read-surface checks
 
 ## Next Milestone
 Federation compatibility and production hardening:
@@ -144,28 +154,9 @@ Federation compatibility and production hardening:
 - Plan migration path from JSON-file durability to SQLite/Postgres.
 
 ## TODO
-- Priority P0: end-user discovery workflow (single input frontpage resolver):
-  - Add minimal frontpage with one “anything goes” input that accepts Bluesky user/post identifiers and URLs.
-  - Normalize common user inputs:
-    - `mouseu.bsky.social`
-    - `@mouseu.bsky.social`
-    - `https://bsky.app/profile/did:...`
-    - `https://bsky.app/profile/<handle>`
-    - bridged/domain-style actor inputs such as `@lnkr.gts.burning.homes.ap.brid.gy`, `@autumnivy.net`, `@bsky.app`, and similar variants.
-  - Normalize common post inputs:
-    - `https://bsky.app/profile/<id-or-handle>/post/<rkey>`
-    - equivalent frequently used variants from other nodes/domains.
-  - Return canonical bridge URLs suitable for Mastodon/GtS search for both actor and post discovery.
-  - Fetch/materialize actors and posts on demand when not yet cached so discovery does not depend on pre-seeding.
-  - Guarantee old bridged posts remain dereferenceable for federation fetches (e.g. repost/boost retrieval by other instances).
-- Priority P0: bridged Bluesky profile/post fidelity and lazy retrieval:
-  - Represent bridged actors with accurate profile metadata: avatar, description, and banner.
-  - Mark bridged actors as bot accounts in ActivityPub.
-  - Prepend actor profile summary with a notice line stating the account is bridged by `{service-url}` and does not receive interactions.
-  - Support pinned posts in actor representation/outbox as expected by AP consumers.
-  - Ensure configurable caching strategy for actor/profile/post data and on-demand retrieval for uncached users/posts.
-  - Support reposts and quote posts correctly, including cases where the referenced/reposted user is not followed by anyone.
-  - Ensure Bluesky mentions resolve to bridged AP account links (not only Bluesky web URLs) wherever possible.
+- Discovery UX hardening:
+  - expand resolver parsing for additional fediverse profile URL shapes beyond `/profile/...` and bridge-native AP URLs.
+  - add JSON API variant for resolver output to support scripted/CLI discovery workflows.
 - Federation compatibility hardening:
   - Add inbound RFC9421 message-signature verification path alongside the current cavage verifier.
 - Production durability/ops:

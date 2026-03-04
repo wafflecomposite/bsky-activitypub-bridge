@@ -10,11 +10,12 @@ const app = createBridgeApplication({
   dataDir,
   strictInboxSignatures: parseBoolean(process.env.STRICT_INBOX_SIGNATURES, false),
   postVisibility: process.env.BRIDGE_POST_VISIBILITY ?? "unlisted",
+  profileCacheMaxAgeMs: parseInteger(process.env.PROFILE_CACHE_MAX_AGE_MS, 60_000),
   signatureMaxAgeSeconds: parseInteger(process.env.INBOX_SIGNATURE_MAX_AGE_SECONDS, 300),
   jetstream: {
     enabled: parseBoolean(process.env.ENABLE_JETSTREAM, false),
     url: process.env.JETSTREAM_URL,
-    wantedCollections: parseList(process.env.JETSTREAM_WANTED_COLLECTIONS, ["app.bsky.feed.post"]),
+    wantedCollections: parseList(process.env.JETSTREAM_WANTED_COLLECTIONS, ["app.bsky.feed.post", "app.bsky.feed.repost"]),
     wantedDids: parseList(process.env.JETSTREAM_WANTED_DIDS, []),
     autoFollowedDids: parseBoolean(process.env.JETSTREAM_AUTO_FOLLOWED_DIDS, true),
     wantedDidsRefreshMs: parseInteger(process.env.JETSTREAM_WANTED_DIDS_REFRESH_MS, 30_000),

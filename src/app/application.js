@@ -22,6 +22,7 @@ export function createBridgeApplication({
   actorCache = null,
   strictInboxSignatures = false,
   postVisibility = "unlisted",
+  profileCacheMaxAgeMs = 60_000,
   signatureMaxAgeSeconds = 300,
   fetchImpl = fetch,
   shardId = "default",
@@ -63,6 +64,7 @@ export function createBridgeApplication({
     store: resolvedStore,
     keyManager: resolvedKeyManager,
     fetchImpl,
+    profileCacheMaxAgeMs,
     deliveryQueue: resolvedQueue,
     actorCache: resolvedActorCache,
     inboxSignatureVerifier
@@ -95,7 +97,7 @@ export function createBridgeApplication({
           ? () => resolvedStore.listFollowedDids?.() ?? []
           : null,
         wantedDidsRefreshMs: jetstream.wantedDidsRefreshMs ?? 30_000,
-        wantedCollections: jetstream.wantedCollections ?? ["app.bsky.feed.post"],
+        wantedCollections: jetstream.wantedCollections ?? ["app.bsky.feed.post", "app.bsky.feed.repost"],
         jetstreamUrl: jetstream.url,
         reconnectDelayMs: jetstream.reconnectDelayMs ?? 1000,
         rewindSeconds: jetstream.rewindSeconds ?? 5,

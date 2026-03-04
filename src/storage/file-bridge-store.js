@@ -21,16 +21,26 @@ export class FileBridgeStore {
   upsertActor(actor) {
     const did = assertDid(actor.did);
     const handle = assertHandle(actor.handle);
+    const existing = this.#actorsByDid.get(did) ?? null;
+    const hasOwn = (key) => Object.prototype.hasOwnProperty.call(actor, key);
 
     const normalized = {
       did,
       handle,
-      displayName: actor.displayName ?? null,
-      summary: actor.summary ?? null,
-      avatarUrl: actor.avatarUrl ?? null,
-      bannerUrl: actor.bannerUrl ?? null,
+      displayName: hasOwn("displayName") ? actor.displayName ?? null : existing?.displayName ?? null,
+      summary: hasOwn("summary") ? actor.summary ?? null : existing?.summary ?? null,
+      avatarUrl: hasOwn("avatarUrl") ? actor.avatarUrl ?? null : existing?.avatarUrl ?? null,
+      bannerUrl: hasOwn("bannerUrl") ? actor.bannerUrl ?? null : existing?.bannerUrl ?? null,
+      pinnedPostUri: hasOwn("pinnedPostUri") ? actor.pinnedPostUri ?? null : existing?.pinnedPostUri ?? null,
+      profileFetchedAt: hasOwn("profileFetchedAt")
+        ? normalizeOptionalIsoString(actor.profileFetchedAt)
+        : existing?.profileFetchedAt ?? null,
       updatedAt: new Date().toISOString()
     };
+
+    if (existing?.handle && existing.handle !== handle) {
+      this.#didByHandle.delete(existing.handle);
+    }
 
     this.#actorsByDid.set(did, normalized);
     this.#didByHandle.set(handle, did);
@@ -297,4 +307,21 @@ function normalizeLimit(value) {
   }
 
   return 20;
+}
+
+function normalizeOptionalIsoString(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return new Date(parsed).toISOString();
 }

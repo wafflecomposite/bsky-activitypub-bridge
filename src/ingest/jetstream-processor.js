@@ -1,5 +1,5 @@
 import { actorId, objectId } from "../domain/identifiers.js";
-import { buildAudience, mapBskyPostToActivityPub } from "../bridge/post-mapper.js";
+import { buildAudience, mapBskyPostToActivityPub, parseAtPostUri } from "../bridge/post-mapper.js";
 import { planDeliveryTargets } from "../delivery/recipient-planner.js";
 
 export class JetstreamProcessor {
@@ -41,7 +41,7 @@ export class JetstreamProcessor {
       };
     }
 
-    if (!isPostCommit(parsed)) {
+    if (!isSupportedCommit(parsed)) {
       return {
         status: "ignored",
         cursor: note.cursor,
@@ -56,6 +56,7 @@ export class JetstreamProcessor {
         store: this.#store,
         did: parsed.did,
         rkey: parsed.rkey,
+        collection: parsed.collection,
         operation: parsed.operation,
         record: parsed.record,
         visibility: this.#postVisibility
@@ -73,6 +74,7 @@ export class JetstreamProcessor {
       store: this.#store,
       did: parsed.did,
       rkey: parsed.rkey,
+      collection: parsed.collection,
       operation: parsed.operation,
       activity,
       cursor: note.cursor
@@ -185,15 +187,26 @@ function normalizeJetstreamEvent(event) {
   };
 }
 
-function isPostCommit(parsed) {
-  if (parsed.collection !== "app.bsky.feed.post") {
+function isSupportedCommit(parsed) {
+  if (!["app.bsky.feed.post", "app.bsky.feed.repost"].includes(parsed.collection)) {
     return false;
   }
 
   return ["create", "update", "delete"].includes(parsed.operation);
 }
 
-function mapEventToActivity({ baseUrl, store, did, rkey, operation, record, visibility }) {
+function mapEventToActivity({ baseUrl, store, did, rkey, collection, operation, record, visibility }) {
+  if (collection === "app.bsky.feed.repost") {
+    return mapRepostEventToActivity({
+      baseUrl,
+      did,
+      rkey,
+      operation,
+      record,
+      visibility
+    });
+  }
+
   if (operation === "delete") {
     const actor = actorId(baseUrl, did);
     const id = objectId(baseUrl, did, rkey);
@@ -258,18 +271,21 @@ function normalizeTimeUs(value) {
   return null;
 }
 
-function persistMappedActivity({ store, did, rkey, operation, activity, cursor }) {
+function persistMappedActivity({ store, did, rkey, collection, operation, activity, cursor }) {
   if (typeof store?.upsertObjectActivity !== "function") {
     return;
   }
 
+  const cacheKey = collection === "app.bsky.feed.post"
+    ? rkey
+    : `${collection}:${rkey}`;
   const object = activity?.object && typeof activity.object === "object"
     ? activity.object
     : null;
 
   store.upsertObjectActivity({
     did,
-    rkey,
+    rkey: cacheKey,
     operation,
     object,
     activity,
@@ -292,4 +308,61 @@ function resolveBridgedReplyObjectId({ baseUrl, store, replyDid, replyRkey }) {
   } catch {
     return null;
   }
+}
+
+function mapRepostEventToActivity({ baseUrl, did, rkey, operation, record, visibility }) {
+  const actor = actorId(baseUrl, did);
+  const announceObjectId = objectId(baseUrl, did, `repost:${rkey}`);
+  const audience = buildAudience({ baseUrl, did, visibility });
+
+  if (operation === "delete") {
+    return {
+      "@context": "https://www.w3.org/ns/activitystreams",
+      id: `${announceObjectId}/activity/delete`,
+      type: "Delete",
+      actor,
+      object: announceObjectId,
+      to: audience.to,
+      cc: audience.cc
+    };
+  }
+
+  const subjectUri = record?.subject?.uri;
+  if (typeof subjectUri !== "string") {
+    throw new Error("Jetstream repost missing subject.uri");
+  }
+
+  const parsed = parseAtPostUri(subjectUri);
+  const objectRef = parsed
+    ? objectId(baseUrl, parsed.did, parsed.rkey)
+    : subjectUri;
+
+  if (operation === "update") {
+    return {
+      "@context": "https://www.w3.org/ns/activitystreams",
+      id: `${announceObjectId}/activity/update`,
+      type: "Update",
+      actor,
+      to: audience.to,
+      cc: audience.cc,
+      object: {
+        id: announceObjectId,
+        type: "Announce",
+        actor,
+        published: typeof record?.createdAt === "string" ? record.createdAt : undefined,
+        object: objectRef
+      }
+    };
+  }
+
+  return {
+    "@context": "https://www.w3.org/ns/activitystreams",
+    id: `${announceObjectId}/activity/announce`,
+    type: "Announce",
+    actor,
+    published: typeof record?.createdAt === "string" ? record.createdAt : undefined,
+    to: audience.to,
+    cc: audience.cc,
+    object: objectRef
+  };
 }

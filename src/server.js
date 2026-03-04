@@ -585,7 +585,7 @@ async function handleGetFeatured({ url, store, publicBaseUrl, fetchImpl, profile
   };
 }
 
-async function handleGetObject({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
+async function handleGetObject({ url, store, publicBaseUrl, fetchImpl }) {
   const match = /^\/ap\/object\/([^/]+)\/([^/]+)$/.exec(url.pathname);
   if (!match) {
     return {
@@ -605,21 +605,6 @@ async function handleGetObject({ url, store, publicBaseUrl, fetchImpl, profileCa
       status: 400,
       contentType: "application/json",
       body: { error: error.message }
-    };
-  }
-
-  const actor = await ensureActorProfile({
-    store,
-    fetchImpl,
-    did,
-    cacheMaxAgeMs: profileCacheMaxAgeMs
-  });
-
-  if (!actor) {
-    return {
-      status: 404,
-      contentType: "application/json",
-      body: { error: "Bridge actor not found" }
     };
   }
 
@@ -802,29 +787,18 @@ async function resolveDiscoveryQuery({
   }
 
   if (parsed.kind === "post") {
-    const actorProfile = parsed.did
-      ? await ensureActorProfile({
-        store,
-        fetchImpl,
-        did: parsed.did,
-        cacheMaxAgeMs: profileCacheMaxAgeMs
-      })
-      : await ensureActorProfile({
-        store,
-        fetchImpl,
-        handle: parsed.handle,
-        cacheMaxAgeMs: profileCacheMaxAgeMs
-      });
-
-    if (!actorProfile) {
-      throw new Error("Unable to resolve post author");
-    }
+    const author = await resolvePostAuthorReference({
+      parsed,
+      store,
+      fetchImpl,
+      cacheMaxAgeMs: profileCacheMaxAgeMs
+    });
 
     const record = await ensurePostRecord({
       store,
       fetchImpl,
       baseUrl: publicBaseUrl,
-      did: actorProfile.did,
+      did: author.did,
       rkey: parsed.rkey
     });
 
@@ -834,17 +808,74 @@ async function resolveDiscoveryQuery({
 
     return {
       kind: "post",
-      did: actorProfile.did,
-      handle: actorProfile.handle,
+      did: author.did,
+      handle: author.handle,
       rkey: parsed.rkey,
-      postUrl: objectId(publicBaseUrl, actorProfile.did, parsed.rkey),
-      actorUrl: actorId(publicBaseUrl, actorProfile.did),
-      acct: `${actorProfile.handle}@${bridgeHost}`,
-      webfinger: webfingerSubject(actorProfile.handle, bridgeHost)
+      postUrl: objectId(publicBaseUrl, author.did, parsed.rkey),
+      actorUrl: actorId(publicBaseUrl, author.did),
+      acct: author.handle ? `${author.handle}@${bridgeHost}` : null,
+      webfinger: author.handle ? webfingerSubject(author.handle, bridgeHost) : null
     };
   }
 
   throw new Error("Unsupported discovery target");
+}
+
+async function resolvePostAuthorReference({ parsed, store, fetchImpl, cacheMaxAgeMs }) {
+  const actorProfile = parsed.did
+    ? await ensureActorProfile({
+      store,
+      fetchImpl,
+      did: parsed.did,
+      cacheMaxAgeMs
+    })
+    : await ensureActorProfile({
+      store,
+      fetchImpl,
+      handle: parsed.handle,
+      cacheMaxAgeMs
+    });
+
+  if (actorProfile?.did) {
+    return {
+      did: actorProfile.did,
+      handle: actorProfile.handle ?? parsed.handle ?? null
+    };
+  }
+
+  if (parsed.did) {
+    return {
+      did: parsed.did,
+      handle: parsed.handle ?? null
+    };
+  }
+
+  let did = null;
+  try {
+    did = await resolveHandleToDid({ handle: parsed.handle, fetchImpl });
+  } catch {
+    did = null;
+  }
+
+  if (!did) {
+    throw new Error("Unable to resolve post author");
+  }
+
+  if (typeof store.upsertActor === "function") {
+    try {
+      store.upsertActor({
+        did,
+        handle: parsed.handle
+      });
+    } catch {
+      // Best-effort cache warm-up only.
+    }
+  }
+
+  return {
+    did,
+    handle: parsed.handle
+  };
 }
 
 function isActorStale(actor, nowMs, maxAgeMs) {
@@ -918,7 +949,7 @@ function renderDiscoveryFrontpage({ publicBaseUrl, input, result, error }) {
     <p>Paste a Bluesky user or post and copy the single search target for Mastodon/GtS.</p>
     <div class="box">
       <form method="get" action="/">
-        <input type="text" name="q" value="${escapedInput}" placeholder="mouseu.bsky.social or https://bsky.app/profile/.../post/..." autocomplete="off">
+        <input type="text" name="q" value="${escapedInput}" placeholder="mouseu.bsky.social, @mouseu.bsky.social, or https://bsky.app/profile/.../post/..." autocomplete="off">
         <button type="submit">Resolve</button>
       </form>
       ${resultHtml}
@@ -934,7 +965,7 @@ function renderDiscoveryResult(result, error) {
   }
 
   if (!result) {
-    return `<p class="hint">Supported examples: <code>mouseu.bsky.social</code>, <code>@mouseu.bsky.social</code>, <code>https://bsky.app/profile/<id>/post/<rkey></code></p>`;
+    return `<p class="hint">Supported examples: <code>mouseu.bsky.social</code>, <code>@mouseu.bsky.social</code>, <code>https://bsky.app/profile/<id></code>, <code>https://bsky.app/profile/<id>/post/<rkey></code></p>`;
   }
 
   const target = result.kind === "post"

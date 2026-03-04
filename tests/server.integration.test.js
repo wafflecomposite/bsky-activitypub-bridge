@@ -219,11 +219,6 @@ test("dispatchBridgeRequest can materialize uncached object on demand", async ()
   const store = new InMemoryBridgeStore();
   const keyManager = new InMemoryKeyManager();
 
-  store.upsertActor({
-    did: "did:plc:alice",
-    handle: "alice.bsky.social"
-  });
-
   const objectRes = await dispatchBridgeRequest({
     method: "GET",
     rawUrl: "/ap/object/did%3Aplc%3Aalice/late1",
@@ -256,6 +251,49 @@ test("dispatchBridgeRequest can materialize uncached object on demand", async ()
   assert.equal(objectRes.body.content, "late fetched");
   const cached = store.getObjectByRkey("did:plc:alice", "late1");
   assert.equal(cached?.object?.content, "late fetched");
+});
+
+test("dispatchBridgeRequest materializes uncached object even when actor profile is unavailable", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  const objectRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/object/did%3Aplc%3Aalice/late2",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      if (url.includes("/app.bsky.actor.getProfile")) {
+        throw new Error("Object fetch must not depend on profile lookup");
+      }
+
+      assert.equal(
+        url,
+        "https://public.api.bsky.app/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aalice&collection=app.bsky.feed.post&rkey=late2"
+      );
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          uri: "at://did:plc:alice/app.bsky.feed.post/late2",
+          cid: "cid-late-2",
+          value: {
+            $type: "app.bsky.feed.post",
+            text: "late fetched without profile",
+            createdAt: "2026-03-04T00:00:01.000Z"
+          }
+        })
+      };
+    }
+  });
+
+  assert.equal(objectRes.status, 200);
+  assert.equal(objectRes.body.content, "late fetched without profile");
+  const cached = store.getObjectByRkey("did:plc:alice", "late2");
+  assert.equal(cached?.object?.content, "late fetched without profile");
 });
 
 test("dispatchBridgeRequest can auto-materialize actor on WebFinger lookup", async () => {
@@ -440,6 +478,65 @@ test("dispatchBridgeRequest resolves post discovery query and materializes objec
   assert.equal(response.body.includes("autoalice.bsky.social@bridge.example"), false);
   const cached = store.getObjectByRkey("did:plc:autoalice123", "late1");
   assert.equal(cached?.object?.content, "late fetched via frontpage");
+});
+
+test("dispatchBridgeRequest resolves post discovery query when profile lookup is unavailable", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/?q=https%3A%2F%2Fbsky.app%2Fprofile%2Fautoalice.bsky.social%2Fpost%2Flate2",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      if (url.includes("/com.atproto.identity.resolveHandle")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:autoalice123"
+          })
+        };
+      }
+
+      if (url.includes("/app.bsky.actor.getProfile")) {
+        return {
+          status: 503,
+          ok: false,
+          json: async () => ({})
+        };
+      }
+
+      if (url.includes("/com.atproto.repo.getRecord")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            uri: "at://did:plc:autoalice123/app.bsky.feed.post/late2",
+            cid: "cid-late2",
+            value: {
+              $type: "app.bsky.feed.post",
+              text: "late fetched with resolve fallback",
+              createdAt: "2026-03-04T00:00:02.000Z"
+            }
+          })
+        };
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.contentType, "text/html");
+  assert.equal(response.body.includes("https://bridge.example/ap/object/did%3Aplc%3Aautoalice123/late2"), true);
+
+  const cached = store.getObjectByRkey("did:plc:autoalice123", "late2");
+  assert.equal(cached?.object?.content, "late fetched with resolve fallback");
 });
 
 test("dispatchBridgeRequest exposes discovery resolver JSON API", async () => {

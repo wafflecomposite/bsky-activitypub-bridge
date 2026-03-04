@@ -29,7 +29,8 @@ test("loadLiveE2ECredentials loads values from json file", () => {
       },
       bluesky: {
         identifier: "handle.bsky.social",
-        appPassword: "app-pass"
+        appPassword: "app-pass",
+        unfollowedPostUrl: "https://bsky.app/profile/did:plc:abc/post/3xyz"
       }
     }, null, 2));
 
@@ -43,6 +44,7 @@ test("loadLiveE2ECredentials loads values from json file", () => {
     assert.equal(credentials.gtsAccessToken, "token123");
     assert.equal(credentials.blueskyIdentifier, "handle.bsky.social");
     assert.equal(credentials.blueskyAppPassword, "app-pass");
+    assert.equal(credentials.blueskyUnfollowedPostUrl, "https://bsky.app/profile/did:plc:abc/post/3xyz");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -57,7 +59,8 @@ test("loadLiveE2ECredentials falls back to markdown labels", () => {
       "Instance URL: https://gts.md.example",
       "Access Token: md-token",
       "User: md-handle.bsky.social",
-      "App password: md-app-pass"
+      "App password: md-app-pass",
+      "Unfollowed Post URL: https://bsky.app/profile/did:plc:md/post/3md"
     ].join("\n"));
 
     const credentials = loadLiveE2ECredentials({
@@ -70,6 +73,7 @@ test("loadLiveE2ECredentials falls back to markdown labels", () => {
     assert.equal(credentials.gtsAccessToken, "md-token");
     assert.equal(credentials.blueskyIdentifier, "md-handle.bsky.social");
     assert.equal(credentials.blueskyAppPassword, "md-app-pass");
+    assert.equal(credentials.blueskyUnfollowedPostUrl, "https://bsky.app/profile/did:plc:md/post/3md");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -83,7 +87,8 @@ test("loadLiveE2ECredentials gives env priority over file values", () => {
       GTS_INSTANCE_URL: "https://gts.env.example",
       GTS_ACCESS_TOKEN: "env-token",
       BLUESKY_IDENTIFIER: "env-handle.bsky.social",
-      BLUESKY_APP_PASSWORD: "env-app-pass"
+      BLUESKY_APP_PASSWORD: "env-app-pass",
+      BLUESKY_UNFOLLOWED_POST_URL: "https://bsky.app/profile/did:plc:env/post/3env"
     }
   });
 
@@ -91,6 +96,7 @@ test("loadLiveE2ECredentials gives env priority over file values", () => {
   assert.equal(credentials.gtsAccessToken, "env-token");
   assert.equal(credentials.blueskyIdentifier, "env-handle.bsky.social");
   assert.equal(credentials.blueskyAppPassword, "env-app-pass");
+  assert.equal(credentials.blueskyUnfollowedPostUrl, "https://bsky.app/profile/did:plc:env/post/3env");
 });
 
 test("loadLiveE2ECredentials fails when nothing is provided", () => {

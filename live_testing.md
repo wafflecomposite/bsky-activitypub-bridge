@@ -14,7 +14,8 @@ Create `test_credentials.json` in repo root (it is gitignored):
   },
   "bluesky": {
     "identifier": "your-handle.bsky.social",
-    "appPassword": "xxxx-xxxx-xxxx-xxxx"
+    "appPassword": "xxxx-xxxx-xxxx-xxxx",
+    "unfollowedPostUrl": "https://bsky.app/profile/did:plc:.../post/..."
   }
 }
 ```
@@ -24,6 +25,7 @@ The live harness also accepts env overrides:
 - `GTS_ACCESS_TOKEN`
 - `BLUESKY_IDENTIFIER`
 - `BLUESKY_APP_PASSWORD`
+- `BLUESKY_UNFOLLOWED_POST_URL` (optional override for unfollowed post resolver/import check)
 
 ## Required Tooling
 
@@ -57,17 +59,20 @@ Optional env:
 The harness:
 1. Starts a quick Cloudflare tunnel.
 2. Boots bridge in discovery mode (Jetstream off) and waits for actor readiness.
-3. Discovers remote account from GtS search and follows it.
-4. Restarts bridge in ingest mode (Jetstream on, wanted DID pinned).
-5. Publishes a real Bluesky self-thread (`root` + `reply`) and waits for both posts on GtS home timeline.
-6. Verifies the received reply is linked to the received root (`in_reply_to_id`/`in_reply_to_uri`).
-7. Verifies bridge read endpoints for the same thread:
+3. Verifies resolver actor target and resolver post target contract.
+4. Verifies an unfollowed Bluesky post resolves to a bridge object URL and is importable from GtS status search.
+5. Discovers remote account from GtS search and follows it.
+6. Restarts bridge in ingest mode (Jetstream on, wanted DID pinned).
+7. Publishes a real Bluesky self-thread (`root` + `reply`) and waits for both posts on GtS home timeline.
+8. Verifies the received reply is linked to the received root (`in_reply_to_id`/`in_reply_to_uri`).
+9. Verifies bridge read endpoints for the same thread:
    - actor outbox contains both root and reply activities
    - object endpoint returns both notes
    - reply object references bridged root object via `inReplyTo`
-8. Uploads local image fixture (`tests/data/example_image.jpg`) to Bluesky, posts it, and verifies:
+10. Uploads local image fixture (`tests/data/example_image.jpg`) to Bluesky, posts it, and verifies:
    - GtS home timeline status includes media attachment
    - bridge object endpoint includes ActivityPub `attachment`
+11. Publishes a real Bluesky repost and verifies bridge outbox contains ActivityPub `Announce`.
 
 ## Manual Bring-Up (Debug Path)
 
@@ -102,4 +107,4 @@ npm start
 - Follow state can stay in `requested` for a while; poll `/api/v1/accounts/relationships`.
 - Keep signing keys persistent across restarts (`DATA_DIR` + file-backed key manager) or stricter servers may reject signed deliveries.
 - If Jetstream is disabled during the posting phase, no Bluesky posts are ingested or delivered.
-- Bridge post visibility is intentionally `unlisted` (`to: followers`, `cc: Public`) to avoid polluting federated public feeds.
+- Bridge post visibility is intentionally `unlisted` (`to: Public`, `cc: followers`) to keep delivery follower-scoped while avoiding federated feed spam behavior for automation.

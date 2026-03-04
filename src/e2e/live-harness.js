@@ -7,6 +7,7 @@ import { createBridgeApplication } from "../app/application.js";
 import { getProfile } from "../bsky/public-api.js";
 
 const DEFAULT_DID = "did:plc:ct7l6fgjtseazmaunhzrbydz";
+const DEFAULT_UNFOLLOWED_POST_URL = "https://bsky.app/profile/did:plc:22tkvmk7w562u3vueqeufkoa/post/3mgapjtxh5k2p";
 
 export async function runLiveE2EHarness({
   credentials = null,
@@ -65,6 +66,7 @@ export async function runLiveE2EHarness({
     await app.start({ host: "127.0.0.1", port });
 
     await waitForBridgeReady({ port, did, timeoutMs: 90_000 });
+    const localBaseUrl = `http://127.0.0.1:${port}`;
     const bridgeActorProfile = await verifyBridgeActorProfile({
       tunnelUrl,
       port,
@@ -73,8 +75,21 @@ export async function runLiveE2EHarness({
     });
 
     const resolverActor = await verifyResolverActorTarget({
-      tunnelUrl,
+      resolverBaseUrl: localBaseUrl,
       query: resolvedCredentials.blueskyIdentifier
+    });
+    const resolverUnfollowedPost = await verifyResolverPostTargetFromQuery({
+      resolverBaseUrl: localBaseUrl,
+      publicBaseUrl: tunnelUrl,
+      query: resolvedCredentials.blueskyUnfollowedPostUrl
+    });
+    const resolverUnfollowedPostSearch = await waitForStatusSearchByUrl({
+      instanceUrl: resolvedCredentials.gtsInstanceUrl,
+      accessToken: resolvedCredentials.gtsAccessToken,
+      targetUrl: resolverUnfollowedPost.target,
+      marker: null,
+      timeoutMs: 180_000,
+      log
     });
     const remoteAcct = resolverActor.target;
     const discovered = await discoverRemoteAccountWithRetry({
@@ -141,7 +156,8 @@ export async function runLiveE2EHarness({
     const rootRkey = extractPostRkeyFromAtUri(postedThread.root.uri);
     const replyRkey = extractPostRkeyFromAtUri(postedThread.reply.uri);
     const resolverPost = await verifyResolverPostTarget({
-      tunnelUrl,
+      resolverBaseUrl: localBaseUrl,
+      publicBaseUrl: tunnelUrl,
       handle: resolvedCredentials.blueskyIdentifier,
       rkey: rootRkey
     });
@@ -154,7 +170,8 @@ export async function runLiveE2EHarness({
       log
     });
     const bridgeReadSurface = await waitForBridgeThreadReadSurface({
-      tunnelUrl,
+      localBaseUrl,
+      publicBaseUrl: tunnelUrl,
       did,
       rootRkey,
       replyRkey,
@@ -181,7 +198,7 @@ export async function runLiveE2EHarness({
 
     const mediaRkey = extractPostRkeyFromAtUri(postedMedia.uri);
     const bridgeMediaObject = await waitForBridgeMediaObject({
-      tunnelUrl,
+      localBaseUrl,
       did,
       rkey: mediaRkey,
       marker: postedMedia.marker,
@@ -196,7 +213,8 @@ export async function runLiveE2EHarness({
     });
 
     const bridgeRepost = await waitForBridgeRepostActivity({
-      tunnelUrl,
+      localBaseUrl,
+      publicBaseUrl: tunnelUrl,
       did,
       rootDid: did,
       rootRkey: rootRkey,
@@ -219,6 +237,8 @@ export async function runLiveE2EHarness({
         && bridgeActorProfile.bannerMatches === true
         && bridgeActorProfile.summaryContainsDescription === true
         && resolverActor.ok === true
+        && resolverUnfollowedPost.ok === true
+        && resolverUnfollowedPostSearch.found === true
         && resolverPost.ok === true
         && resolverPostSearch.found === true
         && timelineThread.threadLinked === true
@@ -235,6 +255,8 @@ export async function runLiveE2EHarness({
       followState,
       bridgeActorProfile,
       resolverActor,
+      resolverUnfollowedPost,
+      resolverUnfollowedPostSearch,
       postedThread,
       resolverPost,
       resolverPostSearch,
@@ -291,6 +313,13 @@ export function loadLiveE2ECredentials({
       jsonCredentials?.bluesky?.appPassword
     ])
     ?? extractLabeledValue(fileText, "App password");
+  const blueskyUnfollowedPostUrl = env.BLUESKY_UNFOLLOWED_POST_URL
+    ?? pickFirstString([
+      jsonCredentials?.blueskyUnfollowedPostUrl,
+      jsonCredentials?.bluesky?.unfollowedPostUrl
+    ])
+    ?? extractLabeledValue(fileText, "Unfollowed Post URL")
+    ?? DEFAULT_UNFOLLOWED_POST_URL;
 
   const missing = [];
   if (!gtsInstanceUrl) {
@@ -314,7 +343,8 @@ export function loadLiveE2ECredentials({
     gtsInstanceUrl,
     gtsAccessToken,
     blueskyIdentifier,
-    blueskyAppPassword
+    blueskyAppPassword,
+    blueskyUnfollowedPostUrl
   };
 }
 
@@ -324,37 +354,48 @@ export function extractTunnelUrlFromLine(line) {
 }
 
 async function startQuickTunnel({ cloudflaredPath, port, log }) {
-  const args = ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate"];
-  const child = spawn(cloudflaredPath, args, {
-    stdio: ["ignore", "pipe", "pipe"]
-  });
+  const maxAttempts = 3;
+  let lastError = null;
 
-  let url = null;
-  const lines = [];
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const args = ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate"];
+    const child = spawn(cloudflaredPath, args, {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
 
-  const onData = (chunk) => {
-    const text = chunk.toString("utf8");
-    for (const line of text.split(/\r?\n/)) {
-      if (!line.trim()) {
-        continue;
+    let url = null;
+    const lines = [];
+
+    const onData = (chunk) => {
+      const text = chunk.toString("utf8");
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.trim()) {
+          continue;
+        }
+
+        lines.push(line);
+        const parsed = extractTunnelUrlFromLine(line);
+        if (parsed && !url) {
+          url = parsed;
+        }
       }
+    };
 
-      lines.push(line);
-      const parsed = extractTunnelUrlFromLine(line);
-      if (parsed && !url) {
-        url = parsed;
-      }
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+
+    try {
+      await waitForCondition(() => url !== null, 45_000, 250);
+      log(`tunnel-url=${url}`);
+      return { child, url, lines };
+    } catch (error) {
+      lastError = error;
+      log(`tunnel-attempt=${attempt} failed: ${error instanceof Error ? error.message : String(error)}`);
+      await safeStopTunnel({ child });
     }
-  };
+  }
 
-  child.stdout.on("data", onData);
-  child.stderr.on("data", onData);
-
-  await waitForCondition(() => url !== null, 45_000, 250);
-
-  log(`tunnel-url=${url}`);
-
-  return { child, url, lines };
+  throw lastError ?? new Error("Unable to establish a quick tunnel");
 }
 
 async function safeStopTunnel(tunnel) {
@@ -450,9 +491,9 @@ async function verifyBridgeActorProfile({ tunnelUrl, port, did, blueskyIdentifie
   };
 }
 
-async function verifyResolverActorTarget({ tunnelUrl, query }) {
-  const jsonResult = await resolveDiscoveryTargetViaApi({ tunnelUrl, query });
-  const htmlTarget = await resolveDiscoveryTargetViaHtml({ tunnelUrl, query });
+async function verifyResolverActorTarget({ resolverBaseUrl, query }) {
+  const jsonResult = await resolveDiscoveryTargetViaApi({ resolverBaseUrl, query });
+  const htmlTarget = await resolveDiscoveryTargetViaHtml({ resolverBaseUrl, query });
 
   return {
     ok: jsonResult.kind === "actor" && jsonResult.target === htmlTarget,
@@ -462,24 +503,39 @@ async function verifyResolverActorTarget({ tunnelUrl, query }) {
   };
 }
 
-async function verifyResolverPostTarget({ tunnelUrl, handle, rkey }) {
+async function verifyResolverPostTarget({ resolverBaseUrl, publicBaseUrl, handle, rkey }) {
   const query = `https://bsky.app/profile/${handle}/post/${rkey}`;
-  const jsonResult = await resolveDiscoveryTargetViaApi({ tunnelUrl, query });
-  const htmlTarget = await resolveDiscoveryTargetViaHtml({ tunnelUrl, query });
-  const expectedPostUrl = `${tunnelUrl}/ap/object/${encodeURIComponent(jsonResult.did)}/${encodeURIComponent(rkey)}`;
+  return verifyResolverPostTargetFromQuery({
+    resolverBaseUrl,
+    publicBaseUrl,
+    query,
+    expectedRkey: rkey
+  });
+}
+
+async function verifyResolverPostTargetFromQuery({ resolverBaseUrl, publicBaseUrl, query, expectedRkey = null }) {
+  const jsonResult = await resolveDiscoveryTargetViaApi({ resolverBaseUrl, query });
+  const htmlTarget = await resolveDiscoveryTargetViaHtml({ resolverBaseUrl, query });
+  const expectedPostUrl = `${publicBaseUrl}/ap/object/${encodeURIComponent(jsonResult.did)}/${encodeURIComponent(jsonResult.rkey)}`;
+  const rkeyMatches = expectedRkey === null || expectedRkey === jsonResult.rkey;
 
   return {
-    ok: jsonResult.kind === "post" && jsonResult.target === htmlTarget && jsonResult.target === expectedPostUrl,
+    ok: jsonResult.kind === "post" && jsonResult.target === htmlTarget && jsonResult.target === expectedPostUrl && rkeyMatches,
     kind: jsonResult.kind,
     did: jsonResult.did,
+    rkey: jsonResult.rkey,
     target: jsonResult.target,
     htmlTarget,
     query
   };
 }
 
-async function resolveDiscoveryTargetViaApi({ tunnelUrl, query }) {
-  const response = await fetch(`${tunnelUrl}/api/resolve?q=${encodeURIComponent(query)}`);
+async function resolveDiscoveryTargetViaApi({ resolverBaseUrl, query }) {
+  const response = await retryFetch(
+    () => fetch(`${resolverBaseUrl}/api/resolve?q=${encodeURIComponent(query)}`),
+    90,
+    1000
+  );
   if (!response.ok) {
     throw new Error(`resolver api failed: ${response.status}`);
   }
@@ -493,6 +549,7 @@ async function resolveDiscoveryTargetViaApi({ tunnelUrl, query }) {
     return {
       kind: "post",
       did: body.result.did,
+      rkey: body.result.rkey,
       target: body.result.postUrl
     };
   }
@@ -504,8 +561,12 @@ async function resolveDiscoveryTargetViaApi({ tunnelUrl, query }) {
   };
 }
 
-async function resolveDiscoveryTargetViaHtml({ tunnelUrl, query }) {
-  const response = await fetch(`${tunnelUrl}/?q=${encodeURIComponent(query)}`);
+async function resolveDiscoveryTargetViaHtml({ resolverBaseUrl, query }) {
+  const response = await retryFetch(
+    () => fetch(`${resolverBaseUrl}/?q=${encodeURIComponent(query)}`),
+    90,
+    1000
+  );
   if (!response.ok) {
     throw new Error(`resolver html failed: ${response.status}`);
   }
@@ -914,7 +975,9 @@ async function waitForStatusSearchByUrl({ instanceUrl, accessToken, targetUrl, m
       });
 
       const statuses = Array.isArray(body?.statuses) ? body.statuses : [];
-      const status = statuses.find((entry) => statusContainsMarker(entry, marker)) ?? null;
+      const status = typeof marker === "string" && marker
+        ? statuses.find((entry) => statusContainsMarker(entry, marker)) ?? null
+        : statuses[0] ?? null;
       last = {
         found: status !== null,
         statusId: status?.id ?? null
@@ -934,7 +997,8 @@ async function waitForStatusSearchByUrl({ instanceUrl, accessToken, targetUrl, m
 }
 
 async function waitForBridgeThreadReadSurface({
-  tunnelUrl,
+  localBaseUrl,
+  publicBaseUrl,
   did,
   rootRkey,
   replyRkey,
@@ -953,9 +1017,11 @@ async function waitForBridgeThreadReadSurface({
   };
 
   const encodedDid = encodeURIComponent(did);
-  const rootObjectId = `${tunnelUrl}/ap/object/${encodedDid}/${encodeURIComponent(rootRkey)}`;
-  const replyObjectId = `${tunnelUrl}/ap/object/${encodedDid}/${encodeURIComponent(replyRkey)}`;
-  const outboxUrl = `${tunnelUrl}/ap/actor/${encodedDid}/outbox?limit=40`;
+  const rootObjectId = `${publicBaseUrl}/ap/object/${encodedDid}/${encodeURIComponent(rootRkey)}`;
+  const replyObjectId = `${publicBaseUrl}/ap/object/${encodedDid}/${encodeURIComponent(replyRkey)}`;
+  const rootObjectUrl = `${localBaseUrl}/ap/object/${encodedDid}/${encodeURIComponent(rootRkey)}`;
+  const replyObjectUrl = `${localBaseUrl}/ap/object/${encodedDid}/${encodeURIComponent(replyRkey)}`;
+  const outboxUrl = `${localBaseUrl}/ap/actor/${encodedDid}/outbox?limit=40`;
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
@@ -973,10 +1039,10 @@ async function waitForBridgeThreadReadSurface({
         return content.includes(replyMarker);
       });
 
-      const rootResponse = await fetch(rootObjectId);
+      const rootResponse = await fetch(rootObjectUrl);
       const rootObject = rootResponse.ok ? await rootResponse.json() : null;
 
-      const replyResponse = await fetch(replyObjectId);
+      const replyResponse = await fetch(replyObjectUrl);
       const replyObject = replyResponse.ok ? await replyResponse.json() : null;
 
       const rootObjectFound = rootResponse.ok
@@ -1010,7 +1076,7 @@ async function waitForBridgeThreadReadSurface({
   return { ok: false, ...last };
 }
 
-async function waitForBridgeMediaObject({ tunnelUrl, did, rkey, marker, timeoutMs, log }) {
+async function waitForBridgeMediaObject({ localBaseUrl, did, rkey, marker, timeoutMs, log }) {
   const startedAt = Date.now();
   let last = {
     found: false,
@@ -1018,7 +1084,7 @@ async function waitForBridgeMediaObject({ tunnelUrl, did, rkey, marker, timeoutM
     mediaUrl: null
   };
 
-  const objectUrl = `${tunnelUrl}/ap/object/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`;
+  const objectUrl = `${localBaseUrl}/ap/object/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`;
   while (Date.now() - startedAt < timeoutMs) {
     try {
       const response = await fetch(objectUrl);
@@ -1046,15 +1112,15 @@ async function waitForBridgeMediaObject({ tunnelUrl, did, rkey, marker, timeoutM
   return last;
 }
 
-async function waitForBridgeRepostActivity({ tunnelUrl, did, rootDid, rootRkey, timeoutMs, log }) {
+async function waitForBridgeRepostActivity({ localBaseUrl, publicBaseUrl, did, rootDid, rootRkey, timeoutMs, log }) {
   const startedAt = Date.now();
   let last = {
     found: false,
     activityId: null
   };
 
-  const outboxUrl = `${tunnelUrl}/ap/actor/${encodeURIComponent(did)}/outbox?limit=80`;
-  const expectedObject = `${tunnelUrl}/ap/object/${encodeURIComponent(rootDid)}/${encodeURIComponent(rootRkey)}`;
+  const outboxUrl = `${localBaseUrl}/ap/actor/${encodeURIComponent(did)}/outbox?limit=80`;
+  const expectedObject = `${publicBaseUrl}/ap/object/${encodeURIComponent(rootDid)}/${encodeURIComponent(rootRkey)}`;
 
   while (Date.now() - startedAt < timeoutMs) {
     try {

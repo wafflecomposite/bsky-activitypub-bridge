@@ -152,10 +152,20 @@ Stabilize production-like behavior: strict ingest scoping, reliable follow accep
   - outbox `totalItems` now reports total cached activities independent of pagination `limit`
   - added in-memory/file store outbox count helpers
 - Simplified resolver frontpage UX:
-  - UI now returns only searchable fediverse account address with one-click copy button
+  - UI now returns one search target with one-click copy:
+    - actor input -> searchable fediverse account address
+    - post input -> bridge object URL for status import/search
   - machine-readable JSON resolver endpoint remains available for automation
 - Fixed server request-body handling for proxy compatibility:
   - GET/HEAD/OPTIONS requests no longer block on raw body reads before dispatch
+- Fixed on-demand post materialization for unfollowed/uncached actors:
+  - `GET /ap/object/{did}/{rkey}` no longer hard-fails when actor profile lookup is unavailable
+  - post discovery resolver now falls back to handle->DID resolution when profile fetch is unavailable
+  - added integration regressions for both failure modes
+- Expanded live E2E discovery/import coverage:
+  - verifies resolver contract for unfollowed post URLs
+  - verifies GtS `type=statuses` search can import resolved bridge post URL for unfollowed author
+  - hardened harness against local tunnel-host DNS flakiness by performing bridge read checks via loopback while preserving public URL checks for remote import
 
 ## Verification Status
 - Test commands:
@@ -165,7 +175,7 @@ Stabilize production-like behavior: strict ingest scoping, reliable follow accep
 - Result:
   - automated suite passing (30/30)
   - local E2E harness succeeds
-  - live E2E CI harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including profile fidelity, replies/thread linkage, media propagation, repost propagation, and bridge read-surface checks
+  - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including resolver actor/post contract, unfollowed post import, profile fidelity, replies/thread linkage, media propagation, repost propagation, and bridge read-surface checks
 
 ## Next Milestone
 Reliability and interoperability hardening:
@@ -188,9 +198,6 @@ Reliability and interoperability hardening:
     - posts/statuses count (outbox total independent from pagination limit)
   - Verify/fix pinned-post surfacing through actor `featured` collection, including cache-miss retrieval.
   - Add unit/integration coverage for counters and pinned-post behavior.
-- Priority P0: resolver UX simplification
-  - Keep frontpage output constrained to account+copy contract while preserving accessibility/compatibility across mobile/desktop.
-  - Keep machine-readable `GET /api/resolve` for automation.
 - Priority P1: discovery parser hardening
   - Expand resolver parsing for additional fediverse profile URL shapes beyond `/profile/...` and bridge-native AP URLs.
 - Priority P1: federation compatibility hardening

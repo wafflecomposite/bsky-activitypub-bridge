@@ -183,8 +183,8 @@ test("JetstreamProcessor defaults to unlisted audience for creates", () => {
 
   assert.equal(result.status, "enqueued");
   const queued = queue.list()[0];
-  assert.deepEqual(queued.activity.to, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
-  assert.deepEqual(queued.activity.cc, ["https://www.w3.org/ns/activitystreams#Public"]);
+  assert.deepEqual(queued.activity.to, ["https://www.w3.org/ns/activitystreams#Public"]);
+  assert.deepEqual(queued.activity.cc, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
 });
 
 test("JetstreamProcessor preserves self-thread reply linkage", () => {

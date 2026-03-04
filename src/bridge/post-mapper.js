@@ -28,9 +28,11 @@ export function mapBskyPostToActivityPub({
   });
 
   const note = {
+    "@context": "https://www.w3.org/ns/activitystreams",
     id: noteId,
     type: "Note",
     attributedTo,
+    url: noteId,
     content: rendered.content,
     published: record.createdAt,
     to: audience.to,
@@ -114,8 +116,8 @@ export function buildAudience({ baseUrl, did, visibility = DEFAULT_VISIBILITY })
 
   if (visibility === "unlisted") {
     return {
-      to: [followers],
-      cc: [PUBLIC_AUDIENCE]
+      to: [PUBLIC_AUDIENCE],
+      cc: [followers]
     };
   }
 

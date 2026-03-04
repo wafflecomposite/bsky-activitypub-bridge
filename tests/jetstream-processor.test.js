@@ -252,3 +252,56 @@ test("JetstreamProcessor caches mapped object even when there are no followers",
   const cached = store.getObjectByRkey("did:plc:alice", "cached-without-followers");
   assert.equal(cached?.object?.type, "Note");
 });
+
+test("JetstreamProcessor maps replies to bridged non-self parent when cached", () => {
+  const { store, queue, processor } = createProcessorFixture();
+
+  store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+  store.upsertActor({ did: "did:plc:bob", handle: "bob.bsky.social" });
+  store.upsertObjectActivity({
+    did: "did:plc:bob",
+    rkey: "root9",
+    operation: "create",
+    object: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Abob/root9",
+      type: "Note",
+      published: "2026-03-04T00:00:00.000Z"
+    },
+    activity: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Abob/root9/activity/create",
+      type: "Create",
+      published: "2026-03-04T00:00:00.000Z"
+    }
+  });
+
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/a1",
+    inboxUrl: "https://remote.example/users/a1/inbox"
+  });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 903,
+    commit: {
+      collection: "app.bsky.feed.post",
+      operation: "create",
+      rkey: "reply-to-bob",
+      record: {
+        text: "reply",
+        createdAt: "2026-03-04T00:00:00.000Z",
+        reply: {
+          parent: {
+            uri: "at://did:plc:bob/app.bsky.feed.post/root9"
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(result.status, "enqueued");
+  const queued = queue.list()[0];
+  assert.equal(
+    queued.activity.object.inReplyTo,
+    "https://bridge.example/ap/object/did%3Aplc%3Abob/root9"
+  );
+});

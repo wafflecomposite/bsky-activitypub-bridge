@@ -7,7 +7,14 @@ import {
 const PUBLIC_AUDIENCE = "https://www.w3.org/ns/activitystreams#Public";
 const DEFAULT_VISIBILITY = "unlisted";
 
-export function mapBskyPostToActivityPub({ baseUrl, did, rkey, record, visibility = DEFAULT_VISIBILITY }) {
+export function mapBskyPostToActivityPub({
+  baseUrl,
+  did,
+  rkey,
+  record,
+  visibility = DEFAULT_VISIBILITY,
+  resolveReplyObjectId = null
+}) {
   validateRecord(record);
 
   const attributedTo = actorId(baseUrl, did);
@@ -36,7 +43,8 @@ export function mapBskyPostToActivityPub({ baseUrl, did, rkey, record, visibilit
     const inReplyTo = mapReplyUriToActivityPubReference({
       uri: replyUri,
       baseUrl,
-      currentDid: did
+      currentDid: did,
+      resolveReplyObjectId
     });
 
     if (inReplyTo) {
@@ -49,7 +57,8 @@ export function mapBskyPostToActivityPub({ baseUrl, did, rkey, record, visibilit
     const rootContext = mapReplyUriToActivityPubReference({
       uri: rootUri,
       baseUrl,
-      currentDid: did
+      currentDid: did,
+      resolveReplyObjectId
     });
 
     if (rootContext) {
@@ -255,8 +264,15 @@ function atUriToBskyWebUrl(uri) {
   return `https://bsky.app/profile/${parsed.did}/post/${parsed.rkey}`;
 }
 
-function mapReplyUriToActivityPubReference({ uri, baseUrl, currentDid }) {
+function mapReplyUriToActivityPubReference({ uri, baseUrl, currentDid, resolveReplyObjectId }) {
   const parsed = parseAtPostUri(uri);
+  if (parsed && typeof resolveReplyObjectId === "function") {
+    const bridged = resolveReplyObjectId(parsed.did, parsed.rkey);
+    if (typeof bridged === "string" && bridged) {
+      return bridged;
+    }
+  }
+
   if (parsed && parsed.did === currentDid) {
     return objectId(baseUrl, parsed.did, parsed.rkey);
   }

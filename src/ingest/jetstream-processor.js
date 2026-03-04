@@ -53,6 +53,7 @@ export class JetstreamProcessor {
     try {
       activity = mapEventToActivity({
         baseUrl: this.#baseUrl,
+        store: this.#store,
         did: parsed.did,
         rkey: parsed.rkey,
         operation: parsed.operation,
@@ -192,7 +193,7 @@ function isPostCommit(parsed) {
   return ["create", "update", "delete"].includes(parsed.operation);
 }
 
-function mapEventToActivity({ baseUrl, did, rkey, operation, record, visibility }) {
+function mapEventToActivity({ baseUrl, store, did, rkey, operation, record, visibility }) {
   if (operation === "delete") {
     const actor = actorId(baseUrl, did);
     const id = objectId(baseUrl, did, rkey);
@@ -218,7 +219,13 @@ function mapEventToActivity({ baseUrl, did, rkey, operation, record, visibility 
     did,
     rkey,
     record,
-    visibility
+    visibility,
+    resolveReplyObjectId: (replyDid, replyRkey) => resolveBridgedReplyObjectId({
+      baseUrl,
+      store,
+      replyDid,
+      replyRkey
+    })
   });
 
   if (operation === "update") {
@@ -268,4 +275,21 @@ function persistMappedActivity({ store, did, rkey, operation, activity, cursor }
     activity,
     cursor
   });
+}
+
+function resolveBridgedReplyObjectId({ baseUrl, store, replyDid, replyRkey }) {
+  if (typeof store?.getObjectByRkey !== "function") {
+    return null;
+  }
+
+  try {
+    const cached = store.getObjectByRkey(replyDid, replyRkey);
+    if (!cached || cached.deleted) {
+      return null;
+    }
+
+    return objectId(baseUrl, replyDid, replyRkey);
+  } catch {
+    return null;
+  }
 }

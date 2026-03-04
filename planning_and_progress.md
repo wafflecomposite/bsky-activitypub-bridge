@@ -91,6 +91,9 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
 - Improved reply/thread fidelity for self-thread chains:
   - self-replies now map `inReplyTo` to bridged object IDs
   - reply root now maps into ActivityPub `context` for better thread continuity
+- Expanded reply/thread fidelity for cross-actor chains:
+  - non-self reply parent/root URIs now resolve to bridged object IDs when parent objects are cached
+  - falls back to Bluesky web URLs when bridged parent objects are not available
 - Documented media test fixtures:
   - added `tests/data/README.md` describing available local image/video fixtures and usage guidance
 - Implemented cached read-surface for bridged posts:
@@ -120,8 +123,6 @@ CI-ready live E2E execution strategy:
 - Add automatic artifact retention (run dir, queue/state snapshots) on failure.
 
 ## TODO
-- Reply/thread fidelity:
-  - Expand thread context handling for non-self replies where bridged parent objects exist.
 - Media mapping:
   - Map Bluesky embed/view media into ActivityPub attachments (`Image`/`Document`) with alt text.
   - Add deterministic unit tests using local fixtures in `tests/data/` (`example_image.jpg`, `example_video.mp4`).

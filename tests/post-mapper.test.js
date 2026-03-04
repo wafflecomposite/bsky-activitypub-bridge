@@ -149,6 +149,32 @@ test("mapBskyPostToActivityPub maps self-thread replies to bridged object ids", 
   assert.equal(result.note.context, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post1");
 });
 
+test("mapBskyPostToActivityPub can map non-self replies to bridged object ids when resolver provides one", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post7",
+    resolveReplyObjectId: (replyDid, replyRkey) => {
+      if (replyDid === "did:plc:bob" && replyRkey === "root9") {
+        return "https://bridge.example/ap/object/did%3Aplc%3Abob/root9";
+      }
+
+      return null;
+    },
+    record: {
+      text: "reply to bob",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      reply: {
+        parent: {
+          uri: "at://did:plc:bob/app.bsky.feed.post/root9"
+        }
+      }
+    }
+  });
+
+  assert.equal(result.note.inReplyTo, "https://bridge.example/ap/object/did%3Aplc%3Abob/root9");
+});
+
 test("mapBskyPostToActivityPub supports explicit public visibility", () => {
   const result = mapBskyPostToActivityPub({
     baseUrl,

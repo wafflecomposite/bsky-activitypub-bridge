@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { RemoteActorCache } from "../src/ap/remote-actor-cache.js";
+import { verifyInboxRequestSignature } from "../src/federation/inbox-signature-verifier.js";
+import { createSignedPostHeaders } from "../src/federation/http-signature.js";
 import { dispatchBridgeRequest } from "../src/server.js";
 import { InMemoryKeyManager } from "../src/crypto/key-manager.js";
 import { InMemoryDeliveryQueue } from "../src/ingest/jetstream-processor.js";
@@ -177,4 +180,103 @@ test("dispatchBridgeRequest reuses remote actor cache across follows", async () 
   });
 
   assert.equal(actorFetchCalls, 1);
+});
+
+test("dispatchBridgeRequest can enforce inbox signature verification", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    displayName: "Alice"
+  });
+
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" }
+  });
+
+  const body = JSON.stringify({
+    id: "https://remote.example/activities/follow-3",
+    type: "Follow",
+    actor: {
+      id: "https://remote.example/users/bob",
+      inbox: "https://remote.example/users/bob/inbox"
+    },
+    object: "https://bridge.example/ap/actor/did%3Aplc%3Aalice"
+  });
+
+  const signedHeaders = createSignedPostHeaders({
+    destination: "https://bridge.example/ap/actor/did%3Aplc%3Aalice/inbox",
+    body,
+    keyId: "https://remote.example/users/bob#main-key",
+    privateKeyPem: privateKey,
+    date: new Date("2026-03-04T00:00:00.000Z")
+  });
+
+  const result = await dispatchBridgeRequest({
+    method: "POST",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/inbox",
+    headers: {
+      host: "bridge.example",
+      ...signedHeaders
+    },
+    bodyText: body,
+    store,
+    keyManager,
+    baseUrl,
+    inboxSignatureVerifier: ({ method, requestTarget, headers, body: requestBody }) => verifyInboxRequestSignature({
+      method,
+      requestTarget,
+      headers,
+      body: requestBody,
+      now: () => Date.parse("2026-03-04T00:00:30.000Z"),
+      fetchImpl: async () => ({
+        status: 200,
+        json: async () => ({
+          id: "https://remote.example/users/bob",
+          publicKey: {
+            id: "https://remote.example/users/bob#main-key",
+            owner: "https://remote.example/users/bob",
+            publicKeyPem: publicKey
+          }
+        })
+      })
+    })
+  });
+
+  assert.equal(result.status, 202);
+});
+
+test("dispatchBridgeRequest rejects inbox request when signature verification fails", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    displayName: "Alice"
+  });
+
+  const result = await dispatchBridgeRequest({
+    method: "POST",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/inbox",
+    headers: { host: "bridge.example" },
+    bodyText: JSON.stringify({
+      type: "Follow",
+      actor: "https://remote.example/users/bob",
+      object: "https://bridge.example/ap/actor/did%3Aplc%3Aalice"
+    }),
+    store,
+    keyManager,
+    baseUrl,
+    inboxSignatureVerifier: () => ({ ok: false, error: "bad-signature" })
+  });
+
+  assert.equal(result.status, 401);
+  assert.equal(result.body.error, "bad-signature");
 });

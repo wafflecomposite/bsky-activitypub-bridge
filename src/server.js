@@ -8,7 +8,7 @@ import { InMemoryKeyManager } from "./crypto/key-manager.js";
 import { decodeDidFromPath } from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
 
-export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null, actorCache = null } = {}) {
+export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null, actorCache = null, inboxSignatureVerifier = null } = {}) {
   let publicBaseUrl = baseUrl;
 
   const server = http.createServer(async (req, res) => {
@@ -25,7 +25,8 @@ export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeS
         baseUrl: publicBaseUrl,
         fetchImpl,
         deliveryQueue,
-        actorCache
+        actorCache,
+        inboxSignatureVerifier
       });
 
       sendJsonResponse(res, response);
@@ -87,12 +88,13 @@ export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeS
     keyManager,
     deliveryQueue,
     actorCache,
+    inboxSignatureVerifier,
     server,
     getBaseUrl: () => publicBaseUrl
   };
 }
 
-export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, bodyText = "", store, keyManager, baseUrl, fetchImpl = fetch, deliveryQueue = null, actorCache = null }) {
+export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, bodyText = "", store, keyManager, baseUrl, fetchImpl = fetch, deliveryQueue = null, actorCache = null, inboxSignatureVerifier = null }) {
   if (!baseUrl) {
     throw new Error("Public base URL is not configured");
   }
@@ -109,7 +111,7 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
   }
 
   if (method === "POST" && url.pathname.startsWith("/ap/actor/") && url.pathname.endsWith("/inbox")) {
-    return handlePostInbox({ url, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue, actorCache });
+    return handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier });
   }
 
   return {
@@ -199,7 +201,7 @@ function handleGetActor({ url, store, keyManager, publicBaseUrl }) {
   };
 }
 
-async function handlePostInbox({ url, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache }) {
+async function handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length, -"/inbox".length);
@@ -218,6 +220,33 @@ async function handlePostInbox({ url, store, keyManager, publicBaseUrl, bodyText
       contentType: "application/json",
       body: { error: "Bridge actor not found" }
     };
+  }
+
+  if (inboxSignatureVerifier) {
+    let verification;
+    try {
+      verification = await runInboxSignatureVerifier({
+        inboxSignatureVerifier,
+        method,
+        requestTarget: `${url.pathname}${url.search}`,
+        headers,
+        body: bodyText
+      });
+    } catch (error) {
+      return {
+        status: 401,
+        contentType: "application/json",
+        body: { error: error.message }
+      };
+    }
+
+    if (!verification.ok) {
+      return {
+        status: 401,
+        contentType: "application/json",
+        body: { error: verification.error ?? "Signature verification failed" }
+      };
+    }
   }
 
   let activity;
@@ -277,6 +306,18 @@ async function handlePostInbox({ url, store, keyManager, publicBaseUrl, bodyText
     contentType: "application/activity+json",
     body: result.body
   };
+}
+
+async function runInboxSignatureVerifier({ inboxSignatureVerifier, method, requestTarget, headers, body }) {
+  if (typeof inboxSignatureVerifier === "function") {
+    return inboxSignatureVerifier({ method, requestTarget, headers, body });
+  }
+
+  if (typeof inboxSignatureVerifier.verify === "function") {
+    return inboxSignatureVerifier.verify({ method, requestTarget, headers, body });
+  }
+
+  throw new Error("inboxSignatureVerifier must be a function or object with verify()");
 }
 
 function parseJsonBody(bodyText) {

@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Harden bridge runtime networking behavior for follow flows and Jetstream lifecycle while keeping the system fully test-driven.
+Harden bridge trust and protocol behavior so inbox traffic can be validated and processing remains deterministic under realistic federation conditions.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -46,24 +46,29 @@ Harden bridge runtime networking behavior for follow flows and Jetstream lifecyc
   - cursor rewind on reconnect/start
   - options update messages for dynamic DID updates
   - auto-reconnect scheduling on disconnect
-- Implemented remote actor discovery hardening for follow requests:
+- Implemented follow-path network hardening:
   - signed GET actor fetch when follow payload only contains actor ID
   - TTL-based remote actor cache with invalidation and expiry
   - cache-aware follow endpoint resolution in inbox path
   - queued outbound `Accept` delivery after follow acceptance
+- Implemented optional inbound inbox signature verification:
+  - digest validation
+  - date skew checks
+  - public key lookup from remote actor document via `keyId`
+  - RSA signature verification over signed header list
+  - server-side 401 rejection on verification failure
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
 - Test command: `npm test`
-- Result: all tests passing (14/14)
+- Result: all tests passing (15/15)
 
 ## Next Milestone
-Add production-critical trust and durability guarantees:
-- Add inbound HTTP signature verification for ActivityPub inbox requests.
+Add durability and execution-level E2E validation:
 - Persist queue/state (SQLite-backed) for restart-safe operation.
-- Add integration tests for signature-verification pass/fail behavior and restart recovery.
-- Add an executable local E2E harness that simulates Jetstream stream + remote ActivityPub server retries.
+- Add a local executable E2E harness that simulates Jetstream stream + remote ActivityPub server behavior.
+- Add restart/recovery tests proving cursor continuity and queued delivery replay.
 
 ## Notes
 - Current state is intentionally in-memory for fast iteration and deterministic tests.
-- Real deployment requires persistent storage and inbox request signature verification before live federation.
+- Before live federation trials, persistent storage is required.

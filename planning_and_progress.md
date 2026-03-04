@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Build an end-to-end bridge pipeline skeleton: ingest Jetstream events, map to ActivityPub activities, and deliver outbound signed inbox requests with retry semantics.
+Build a runnable bridge pipeline that can ingest Jetstream events and produce signed ActivityPub deliveries end-to-end.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -36,18 +36,21 @@ Build an end-to-end bridge pipeline skeleton: ingest Jetstream events, map to Ac
   - HTTP `Digest` generation
   - draft-cavage-style HTTP Signature header generation for POST inbox delivery
   - delivery worker with success, permanent-failure, retry scheduling, and capped exponential backoff
+- Implemented runtime orchestration layer:
+  - single runtime that wires ingestion processor + queue + delivery worker
+  - drain loop for queued deliveries
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
 - Test command: `npm test`
-- Result: all tests passing (9/9)
+- Result: all tests passing (10/10)
 
 ## Next Milestone
-Connect abstractions into a runnable bridge loop and harden protocol behavior:
-- Add a real Jetstream WebSocket client integration (subscription lifecycle + reconnect cursor rewind).
-- Add follower actor fetch/discovery to capture inbox/sharedInbox from remote actor documents.
-- Add richer ActivityPub compatibility behavior for `Undo Follow`, `Reject`, and stricter content negotiation.
-- Add integration tests around ingestion-to-delivery flow with mocked Jetstream and mocked remote inboxes.
+Integrate real protocol endpoints and network flows:
+- Add real Jetstream WebSocket subscription lifecycle with reconnect cursor rewind.
+- Add remote follower actor discovery fetch (resolve inbox/sharedInbox from actor object).
+- Add outbound signed `Accept` delivery from inbox follow handling.
+- Add integration tests with mocked WebSocket Jetstream stream and mocked remote inbox actors.
 
 ## Notes
 - Current state is intentionally in-memory for fast iteration and deterministic tests.

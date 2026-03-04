@@ -95,6 +95,14 @@ export class InMemoryDeliveryQueue {
     this.#items.push(item);
   }
 
+  dequeue() {
+    if (this.#items.length === 0) {
+      return null;
+    }
+
+    return this.#items.shift();
+  }
+
   size() {
     return this.#items.length;
   }

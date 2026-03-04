@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Move from static bridge primitives to an ingestion-to-fanout pipeline that can transform Jetstream post events into queued ActivityPub deliveries.
+Build an end-to-end bridge pipeline skeleton: ingest Jetstream events, map to ActivityPub activities, and deliver outbound signed inbox requests with retry semantics.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -31,20 +31,24 @@ Move from static bridge primitives to an ingestion-to-fanout pipeline that can t
   - in-memory Jetstream cursor and dedup state
   - delivery target planner (shared inbox grouping + inbox fallback)
   - Jetstream commit processor for post create/update/delete
-  - in-memory outbound delivery queue abstraction
+  - in-memory outbound delivery queue
+- Implemented outbound delivery mechanics:
+  - HTTP `Digest` generation
+  - draft-cavage-style HTTP Signature header generation for POST inbox delivery
+  - delivery worker with success, permanent-failure, retry scheduling, and capped exponential backoff
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
 - Test command: `npm test`
-- Result: all tests passing (7/7)
+- Result: all tests passing (9/9)
 
 ## Next Milestone
-Wire the queue into actual ActivityPub HTTP delivery mechanics:
-- Implement outbound request builder for inbox delivery payloads.
-- Add HTTP Signature and Digest generation for signed POST delivery.
-- Implement delivery worker with retry/backoff and permanent-failure handling.
-- Add tests for signature headers, grouping-driven single-delivery semantics, and retry behavior.
+Connect abstractions into a runnable bridge loop and harden protocol behavior:
+- Add a real Jetstream WebSocket client integration (subscription lifecycle + reconnect cursor rewind).
+- Add follower actor fetch/discovery to capture inbox/sharedInbox from remote actor documents.
+- Add richer ActivityPub compatibility behavior for `Undo Follow`, `Reject`, and stricter content negotiation.
+- Add integration tests around ingestion-to-delivery flow with mocked Jetstream and mocked remote inboxes.
 
 ## Notes
 - Current state is intentionally in-memory for fast iteration and deterministic tests.
-- Persistent storage (SQLite/Postgres) is required before restart-safe reliability.
+- Persistent storage (SQLite/Postgres) is required before restart-safe reliability and production operation.

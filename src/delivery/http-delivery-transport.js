@@ -1,0 +1,64 @@
+import { createSignedPostHeaders } from "../federation/http-signature.js";
+
+export class HttpDeliveryTransport {
+  #fetch;
+  #now;
+  #onAttempt;
+  #onResult;
+
+  constructor({ fetchImpl = fetch, now = () => Date.now(), onAttempt = null, onResult = null } = {}) {
+    this.#fetch = fetchImpl;
+    this.#now = now;
+    this.#onAttempt = onAttempt;
+    this.#onResult = onResult;
+  }
+
+  async sendSignedActivity({ destination, body, keyId, privateKeyPem, metadata = {} }) {
+    const startedAt = this.#now();
+    const headers = createSignedPostHeaders({
+      destination,
+      body,
+      keyId,
+      privateKeyPem
+    });
+
+    if (this.#onAttempt) {
+      this.#onAttempt({
+        destination,
+        startedAt,
+        metadata
+      });
+    }
+
+    try {
+      const response = await this.#fetch(destination, {
+        method: "POST",
+        headers,
+        body
+      });
+
+      if (this.#onResult) {
+        this.#onResult({
+          destination,
+          status: response.status,
+          durationMs: this.#now() - startedAt,
+          metadata
+        });
+      }
+
+      return response;
+    } catch (error) {
+      if (this.#onResult) {
+        this.#onResult({
+          destination,
+          status: null,
+          durationMs: this.#now() - startedAt,
+          metadata,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+
+      throw error;
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Provide an executable end-to-end local validation loop for bridge behavior (ingest -> queue -> retry -> delivery) with durable state.
+Finalize real-network readiness controls around startup wiring, Jetstream DID refresh, delivery observability hooks, and strict inbox signature policy.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -33,15 +33,11 @@ Provide an executable end-to-end local validation loop for bridge behavior (inge
   - draft-cavage-style HTTP Signature header generation for POST inbox delivery
   - signed GET header generation for remote actor discovery
   - delivery worker with success, permanent-failure, retry scheduling, and capped exponential backoff
-- Implemented runtime orchestration layer:
-  - single runtime that wires ingestion processor + queue + delivery worker
-  - delivery drain loop
-  - Jetstream client start/stop/update hooks
-- Implemented Jetstream WebSocket lifecycle client:
-  - subscription URL builder with wanted collection/DID filters
-  - cursor rewind on reconnect/start
-  - options update messages for dynamic DID updates
-  - auto-reconnect scheduling on disconnect
+- Implemented runtime orchestration and Jetstream lifecycle:
+  - runtime ingest/queue/delivery drain loop
+  - Jetstream start/stop/update hooks
+  - configurable Jetstream URL/reconnect/rewind
+  - auto-refresh of `wantedDids` from provider on interval
 - Implemented follow-path network hardening:
   - signed GET actor fetch when follow payload only contains actor ID
   - TTL-based remote actor cache with invalidation and expiry
@@ -62,19 +58,27 @@ Provide an executable end-to-end local validation loop for bridge behavior (inge
   - reusable harness module for simulated ingest/retry/delivery flow
   - runnable script `npm run e2e:local`
   - harness test asserting retry-then-deliver semantics and cursor continuity
+- Implemented startup/application wiring for deployment controls:
+  - `createBridgeApplication()` composition layer
+  - env-driven runtime/server configuration in `src/index.js`
+  - strict inbox signature mode toggle (`STRICT_INBOX_SIGNATURES`)
+  - data directory persistence toggle (`DATA_DIR`)
+- Implemented outbound transport abstraction with observability hooks:
+  - `HttpDeliveryTransport` for signed delivery HTTP calls
+  - transport attempt/result callbacks for metrics/logging integration
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
 - Test commands:
   - `npm test`
   - `npm run e2e:local`
-- Result: all tests passing (20/20) and local E2E harness succeeds.
+- Result: all tests passing (24/24) and local E2E harness succeeds.
 
 ## Next Milestone
-Bridge-to-real-network readiness:
-- Add real Jetstream WebSocket adapter execution path in runtime startup (configurable endpoint + DID filter refresh loop).
-- Add HTTP transport abstraction for outbound inbox deliveries with structured metrics/logging hooks.
-- Add configurable strict server mode that always enforces inbox signature verification in production.
+Real-world E2E with live services:
+- Run a credentialed staging flow against real Jetstream and a real remote ActivityPub account/server.
+- Validate follow discovery, signed inbox delivery, and post propagation end-to-end with real network responses.
+- Capture reproducible test steps and expected outputs for repeated live checks.
 
 ## Notes
 - Durability is currently JSON-file-backed for zero-dependency local/dev reliability.

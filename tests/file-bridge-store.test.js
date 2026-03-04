@@ -20,6 +20,7 @@ test("FileBridgeStore persists actors and followers", () => {
     const store2 = new FileBridgeStore({ filePath });
     assert.equal(store2.resolveDidByHandle("alice.bsky.social"), "did:plc:alice");
     assert.equal(store2.listFollowers("did:plc:alice").length, 1);
+    assert.deepEqual(store2.listFollowedDids(), ["did:plc:alice"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -9,8 +9,9 @@ export class BridgeRuntime {
   #processor;
   #worker;
   #jetstreamClient = null;
+  #jetstreamDidRefreshTimer = null;
 
-  constructor({ baseUrl, store = new InMemoryBridgeStore(), state = new InMemoryJetstreamState(), queue = new InMemoryDeliveryQueue(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, shardId = "default" }) {
+  constructor({ baseUrl, store = new InMemoryBridgeStore(), state = new InMemoryJetstreamState(), queue = new InMemoryDeliveryQueue(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, shardId = "default", onTransportAttempt = null, onTransportResult = null }) {
     this.store = store;
     this.queue = queue;
     this.state = state;
@@ -29,7 +30,9 @@ export class BridgeRuntime {
       queue,
       keyManager,
       fetchImpl,
-      baseUrl
+      baseUrl,
+      onTransportAttempt,
+      onTransportResult
     });
   }
 
@@ -55,10 +58,19 @@ export class BridgeRuntime {
     return results;
   }
 
-  startJetstream({ wantedDids = [], wantedCollections = ["app.bsky.feed.post"], jetstreamUrl, reconnectDelayMs = 1000, rewindSeconds = 5, WebSocketImpl = WebSocket, timers = globalThis } = {}) {
+  startJetstream({ wantedDids = [], wantedDidsProvider = null, wantedDidsRefreshMs = 0, wantedCollections = ["app.bsky.feed.post"], jetstreamUrl, reconnectDelayMs = 1000, rewindSeconds = 5, WebSocketImpl = WebSocket, timers = globalThis } = {}) {
     if (this.#jetstreamClient) {
       this.#jetstreamClient.stop();
     }
+
+    if (this.#jetstreamDidRefreshTimer) {
+      timers.clearInterval(this.#jetstreamDidRefreshTimer);
+      this.#jetstreamDidRefreshTimer = null;
+    }
+
+    const initialWantedDids = wantedDidsProvider
+      ? normalizeWantedDids(wantedDidsProvider())
+      : normalizeWantedDids(wantedDids);
 
     this.#jetstreamClient = new JetstreamClient({
       processor: {
@@ -66,7 +78,7 @@ export class BridgeRuntime {
       },
       state: this.state,
       shardId: this.shardId,
-      wantedDids,
+      wantedDids: initialWantedDids,
       wantedCollections,
       jetstreamUrl,
       reconnectDelayMs,
@@ -76,9 +88,24 @@ export class BridgeRuntime {
     });
 
     this.#jetstreamClient.start();
+
+    if (wantedDidsProvider && wantedDidsRefreshMs > 0 && typeof timers.setInterval === "function") {
+      this.#jetstreamDidRefreshTimer = timers.setInterval(() => {
+        try {
+          this.updateJetstreamWantedDids(normalizeWantedDids(wantedDidsProvider()));
+        } catch {
+          // Ignore provider failures so the existing stream remains active.
+        }
+      }, wantedDidsRefreshMs);
+    }
   }
 
-  stopJetstream() {
+  stopJetstream({ timers = globalThis } = {}) {
+    if (this.#jetstreamDidRefreshTimer) {
+      timers.clearInterval(this.#jetstreamDidRefreshTimer);
+      this.#jetstreamDidRefreshTimer = null;
+    }
+
     if (!this.#jetstreamClient) {
       return;
     }
@@ -94,4 +121,12 @@ export class BridgeRuntime {
 
     this.#jetstreamClient.setWantedDids(wantedDids);
   }
+}
+
+function normalizeWantedDids(wantedDids) {
+  if (!Array.isArray(wantedDids)) {
+    return [];
+  }
+
+  return [...new Set(wantedDids.filter((did) => typeof did === "string" && did.trim()).map((did) => did.trim()))].sort();
 }

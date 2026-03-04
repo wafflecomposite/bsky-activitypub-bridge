@@ -69,6 +69,18 @@ export class InMemoryBridgeStore {
 
     return Array.from(followers.values());
   }
+
+  listFollowedDids() {
+    const dids = [];
+
+    for (const [did, followers] of this.#followersByDid.entries()) {
+      if (followers.size > 0) {
+        dids.push(did);
+      }
+    }
+
+    return dids.sort();
+  }
 }
 
 function normalizeActorRef(value) {

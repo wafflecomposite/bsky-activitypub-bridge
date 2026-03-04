@@ -1,19 +1,24 @@
 import { actorId } from "../domain/identifiers.js";
-import { createSignedPostHeaders } from "../federation/http-signature.js";
+import { HttpDeliveryTransport } from "./http-delivery-transport.js";
 
 export class DeliveryWorker {
   #queue;
   #keyManager;
-  #fetch;
   #baseUrl;
   #maxAttempts;
+  #deliveryTransport;
 
-  constructor({ queue, keyManager, fetchImpl = fetch, baseUrl, maxAttempts = 4 }) {
+  constructor({ queue, keyManager, fetchImpl = fetch, baseUrl, maxAttempts = 4, deliveryTransport = null, now = () => Date.now(), onTransportAttempt = null, onTransportResult = null }) {
     this.#queue = queue;
     this.#keyManager = keyManager;
-    this.#fetch = fetchImpl;
     this.#baseUrl = baseUrl;
     this.#maxAttempts = maxAttempts;
+    this.#deliveryTransport = deliveryTransport ?? new HttpDeliveryTransport({
+      fetchImpl,
+      now,
+      onAttempt: onTransportAttempt,
+      onResult: onTransportResult
+    });
   }
 
   async drainOnce({ now = Date.now() } = {}) {
@@ -31,19 +36,18 @@ export class DeliveryWorker {
     const actor = actorId(this.#baseUrl, item.did);
     const key = this.#keyManager.ensureKeyPair(item.did);
 
-    const headers = createSignedPostHeaders({
-      destination: item.destination,
-      body,
-      keyId: `${actor}#main-key`,
-      privateKeyPem: key.privateKeyPem
-    });
-
     let response;
     try {
-      response = await this.#fetch(item.destination, {
-        method: "POST",
-        headers,
-        body
+      response = await this.#deliveryTransport.sendSignedActivity({
+        destination: item.destination,
+        body,
+        keyId: `${actor}#main-key`,
+        privateKeyPem: key.privateKeyPem,
+        metadata: {
+          did: item.did,
+          operation: item.operation ?? "unknown",
+          attempt: (item.attempts ?? 0) + 1
+        }
       });
     } catch (error) {
       return this.#handleRetry(item, {

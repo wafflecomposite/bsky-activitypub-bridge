@@ -38,6 +38,14 @@ export function mapBskyPostToActivityPub({
     tag: rendered.tags
   };
 
+  const attachments = mapEmbedToAttachments({
+    did,
+    embed: record.embed
+  });
+  if (attachments.length > 0) {
+    note.attachment = attachments;
+  }
+
   const replyUri = record.reply?.parent?.uri;
   if (typeof replyUri === "string") {
     const inReplyTo = mapReplyUriToActivityPubReference({
@@ -226,6 +234,180 @@ function normalizeFacet(facet, totalBytes) {
   }
 
   return null;
+}
+
+function mapEmbedToAttachments({ did, embed }) {
+  if (!embed || typeof embed !== "object") {
+    return [];
+  }
+
+  const type = embed.$type;
+  if (type === "app.bsky.embed.images") {
+    return mapImageBlobEmbed({ did, embed });
+  }
+
+  if (type === "app.bsky.embed.images#view") {
+    return mapImageViewEmbed(embed);
+  }
+
+  if (type === "app.bsky.embed.external") {
+    return mapExternalEmbed(embed);
+  }
+
+  if (type === "app.bsky.embed.external#view") {
+    return mapExternalViewEmbed(embed);
+  }
+
+  if (type === "app.bsky.embed.video") {
+    return mapVideoBlobEmbed({ did, embed });
+  }
+
+  if (type === "app.bsky.embed.video#view") {
+    return mapVideoViewEmbed(embed);
+  }
+
+  if (type === "app.bsky.embed.record") {
+    return mapRecordEmbed(embed);
+  }
+
+  if (type === "app.bsky.embed.recordWithMedia") {
+    return [
+      ...mapEmbedToAttachments({ did, embed: embed.record }),
+      ...mapEmbedToAttachments({ did, embed: embed.media })
+    ];
+  }
+
+  return [];
+}
+
+function mapImageBlobEmbed({ did, embed }) {
+  const images = Array.isArray(embed.images) ? embed.images : [];
+  const attachments = [];
+
+  for (const image of images) {
+    const cid = extractBlobCid(image?.image);
+    if (!cid) {
+      continue;
+    }
+
+    attachments.push({
+      type: "Image",
+      url: buildBlobDownloadUrl({ did, cid }),
+      ...(typeof image?.image?.mimeType === "string" ? { mediaType: image.image.mimeType } : {}),
+      ...(typeof image?.alt === "string" && image.alt ? { name: image.alt } : {})
+    });
+  }
+
+  return attachments;
+}
+
+function mapImageViewEmbed(embed) {
+  const images = Array.isArray(embed.images) ? embed.images : [];
+  const attachments = [];
+
+  for (const image of images) {
+    if (typeof image?.fullsize !== "string") {
+      continue;
+    }
+
+    attachments.push({
+      type: "Image",
+      url: image.fullsize,
+      ...(typeof image?.alt === "string" && image.alt ? { name: image.alt } : {})
+    });
+  }
+
+  return attachments;
+}
+
+function mapExternalEmbed(embed) {
+  const external = embed.external;
+  if (typeof external?.uri !== "string") {
+    return [];
+  }
+
+  return [{
+    type: "Link",
+    url: external.uri,
+    ...(typeof external?.title === "string" && external.title ? { name: external.title } : {}),
+    ...(typeof external?.description === "string" && external.description ? { summary: external.description } : {})
+  }];
+}
+
+function mapExternalViewEmbed(embed) {
+  const external = embed.external;
+  if (typeof external?.uri !== "string") {
+    return [];
+  }
+
+  return [{
+    type: "Link",
+    url: external.uri,
+    ...(typeof external?.title === "string" && external.title ? { name: external.title } : {}),
+    ...(typeof external?.description === "string" && external.description ? { summary: external.description } : {})
+  }];
+}
+
+function mapVideoBlobEmbed({ did, embed }) {
+  const cid = extractBlobCid(embed.video);
+  if (!cid) {
+    return [];
+  }
+
+  return [{
+    type: "Document",
+    url: buildBlobDownloadUrl({ did, cid }),
+    ...(typeof embed?.video?.mimeType === "string" ? { mediaType: embed.video.mimeType } : {}),
+    ...(typeof embed?.alt === "string" && embed.alt ? { name: embed.alt } : {})
+  }];
+}
+
+function mapVideoViewEmbed(embed) {
+  if (typeof embed?.playlist !== "string") {
+    return [];
+  }
+
+  return [{
+    type: "Document",
+    url: embed.playlist,
+    ...(typeof embed?.alt === "string" && embed.alt ? { name: embed.alt } : {})
+  }];
+}
+
+function mapRecordEmbed(embed) {
+  const uri = embed?.record?.uri ?? embed?.record?.record?.uri;
+  if (typeof uri !== "string") {
+    return [];
+  }
+
+  return [{
+    type: "Link",
+    url: atUriToBskyWebUrl(uri) ?? uri
+  }];
+}
+
+function extractBlobCid(blob) {
+  if (!blob || typeof blob !== "object") {
+    return null;
+  }
+
+  if (typeof blob?.ref?.$link === "string") {
+    return blob.ref.$link;
+  }
+
+  if (typeof blob.ref === "string") {
+    return blob.ref;
+  }
+
+  if (typeof blob.cid === "string") {
+    return blob.cid;
+  }
+
+  return null;
+}
+
+function buildBlobDownloadUrl({ did, cid }) {
+  return `https://bsky.social/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`;
 }
 
 function createUtf8BoundaryMap(text) {

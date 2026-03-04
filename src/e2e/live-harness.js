@@ -12,6 +12,7 @@ export async function runLiveE2EHarness({
   credentialsFile = "test_credentials.json",
   credentialsMarkdownFile = "test_credentials.md",
   cloudflaredPath = "./tools/bin/cloudflared",
+  mediaFixturePath = "tests/data/example_image.jpg",
   cleanup = false,
   workDir = null,
   log = () => {}
@@ -135,10 +136,37 @@ export async function runLiveE2EHarness({
       log
     });
 
+    const postedMedia = await createBlueskyImagePost({
+      identifier: resolvedCredentials.blueskyIdentifier,
+      appPassword: resolvedCredentials.blueskyAppPassword,
+      textPrefix: "Bridge automated live e2e media",
+      imagePath: mediaFixturePath
+    });
+
+    const timelineMedia = await waitForTimelineMediaPost({
+      instanceUrl: resolvedCredentials.gtsInstanceUrl,
+      accessToken: resolvedCredentials.gtsAccessToken,
+      marker: postedMedia.marker,
+      timeoutMs: 180_000,
+      log
+    });
+
+    const mediaRkey = extractPostRkeyFromAtUri(postedMedia.uri);
+    const bridgeMediaObject = await waitForBridgeMediaObject({
+      tunnelUrl,
+      did,
+      rkey: mediaRkey,
+      marker: postedMedia.marker,
+      timeoutMs: 90_000,
+      log
+    });
+
     const summary = {
       ok: followState.following === true
         && timelineThread.threadLinked === true
-        && bridgeReadSurface.ok === true,
+        && bridgeReadSurface.ok === true
+        && timelineMedia.hasMediaAttachment === true
+        && bridgeMediaObject.hasAttachment === true,
       tunnelUrl,
       dataDir: tempDir,
       remoteAcct,
@@ -147,7 +175,10 @@ export async function runLiveE2EHarness({
       followState,
       postedThread,
       timelineThread,
-      bridgeReadSurface
+      bridgeReadSurface,
+      postedMedia,
+      timelineMedia,
+      bridgeMediaObject
     };
 
     return summary;
@@ -395,7 +426,7 @@ async function createBlueskySession({ identifier, appPassword }) {
   return sessionResponse.json();
 }
 
-async function createBlueskyPostRecord({ session, text, reply = null }) {
+async function createBlueskyPostRecord({ session, text, reply = null, recordExtra = null }) {
   const nowIso = new Date().toISOString();
   const createResponse = await fetch("https://bsky.social/xrpc/com.atproto.repo.createRecord", {
     method: "POST",
@@ -410,7 +441,8 @@ async function createBlueskyPostRecord({ session, text, reply = null }) {
         $type: "app.bsky.feed.post",
         text,
         createdAt: nowIso,
-        ...(reply ? { reply } : {})
+        ...(reply ? { reply } : {}),
+        ...(recordExtra && typeof recordExtra === "object" ? recordExtra : {})
       }
     })
   });
@@ -420,6 +452,55 @@ async function createBlueskyPostRecord({ session, text, reply = null }) {
   }
 
   return createResponse.json();
+}
+
+async function createBlueskyImagePost({ identifier, appPassword, textPrefix, imagePath }) {
+  if (!imagePath) {
+    throw new Error("imagePath is required for media post");
+  }
+
+  const marker = `${textPrefix} ${new Date().toISOString()}`;
+  const session = await createBlueskySession({ identifier, appPassword });
+  const imageBytes = readFileSync(imagePath);
+
+  const uploadResponse = await fetch("https://bsky.social/xrpc/com.atproto.repo.uploadBlob", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${session.accessJwt}`,
+      "content-type": inferMediaMimeType(imagePath)
+    },
+    body: imageBytes
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Bluesky blob upload failed: ${uploadResponse.status}`);
+  }
+
+  const uploaded = await uploadResponse.json();
+  const blob = uploaded?.blob;
+  if (!blob || typeof blob !== "object") {
+    throw new Error("Bluesky blob upload returned invalid payload");
+  }
+
+  const created = await createBlueskyPostRecord({
+    session,
+    text: marker,
+    recordExtra: {
+      embed: {
+        $type: "app.bsky.embed.images",
+        images: [{
+          alt: "bridge media fixture",
+          image: blob
+        }]
+      }
+    }
+  });
+
+  return {
+    marker,
+    uri: created.uri,
+    cid: created.cid
+  };
 }
 
 async function createBlueskyThread({ identifier, appPassword, textPrefix }) {
@@ -508,6 +589,50 @@ async function waitForTimelineThread({ instanceUrl, accessToken, rootMarker, rep
     found: false,
     ...lastEvaluation
   };
+}
+
+async function waitForTimelineMediaPost({ instanceUrl, accessToken, marker, timeoutMs, log }) {
+  const startedAt = Date.now();
+  let last = {
+    found: false,
+    hasMediaAttachment: false,
+    statusId: null
+  };
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const statuses = await gtsApi({
+        instanceUrl,
+        accessToken,
+        path: "/api/v1/timelines/home?limit=80",
+        timeoutMs: 30_000
+      });
+
+      const list = Array.isArray(statuses) ? statuses : [];
+      const status = list.find((entry) => statusContainsMarker(entry, marker)) ?? null;
+      const hasMediaAttachment = Array.isArray(status?.media_attachments) && status.media_attachments.length > 0;
+
+      last = {
+        found: status !== null,
+        hasMediaAttachment,
+        statusId: status?.id ?? null
+      };
+
+      if (last.found && last.hasMediaAttachment) {
+        return last;
+      }
+
+      if (last.found && !last.hasMediaAttachment) {
+        log("timeline media post found but media attachments missing yet; waiting...");
+      }
+    } catch (error) {
+      log(`timeline media retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(3_000);
+  }
+
+  return last;
 }
 
 export function evaluateTimelineThread({ statuses, rootMarker, replyMarker }) {
@@ -621,6 +746,42 @@ async function waitForBridgeThreadReadSurface({
   }
 
   return { ok: false, ...last };
+}
+
+async function waitForBridgeMediaObject({ tunnelUrl, did, rkey, marker, timeoutMs, log }) {
+  const startedAt = Date.now();
+  let last = {
+    found: false,
+    hasAttachment: false,
+    mediaUrl: null
+  };
+
+  const objectUrl = `${tunnelUrl}/ap/object/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(objectUrl);
+      const body = response.ok ? await response.json() : null;
+      const attachments = Array.isArray(body?.attachment) ? body.attachment : [];
+      const mediaAttachment = attachments.find((entry) => typeof entry?.url === "string") ?? null;
+      const content = typeof body?.content === "string" ? body.content : "";
+
+      last = {
+        found: response.ok && content.includes(marker),
+        hasAttachment: mediaAttachment !== null,
+        mediaUrl: mediaAttachment?.url ?? null
+      };
+
+      if (last.found && last.hasAttachment) {
+        return last;
+      }
+    } catch (error) {
+      log(`bridge media retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(2_000);
+  }
+
+  return last;
 }
 
 async function gtsApi({ instanceUrl, accessToken, path, method = "GET", timeoutMs = 30_000, body = null }) {
@@ -769,4 +930,25 @@ function extractLabeledValue(text, label) {
   const regex = new RegExp(`^${escaped}:\\s*(.+)$`, "im");
   const match = regex.exec(text);
   return match ? match[1].trim() : null;
+}
+
+function inferMediaMimeType(path) {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+
+  if (lower.endsWith(".png")) {
+    return "image/png";
+  }
+
+  if (lower.endsWith(".webp")) {
+    return "image/webp";
+  }
+
+  if (lower.endsWith(".mp4")) {
+    return "video/mp4";
+  }
+
+  return "application/octet-stream";
 }

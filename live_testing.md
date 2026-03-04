@@ -41,6 +41,7 @@ npm run e2e:live
 Optional env:
 - `LIVE_E2E_CREDENTIALS_FILE` (default: `test_credentials.json`)
 - `LIVE_E2E_CREDENTIALS_MD_FILE` (fallback default: `test_credentials.md`)
+- `LIVE_E2E_MEDIA_FIXTURE` (default: `tests/data/example_image.jpg`)
 - `LIVE_E2E_CLEANUP=1` to remove temporary workdir after run
 
 The harness:
@@ -54,6 +55,9 @@ The harness:
    - actor outbox contains both root and reply activities
    - object endpoint returns both notes
    - reply object references bridged root object via `inReplyTo`
+8. Uploads local image fixture (`tests/data/example_image.jpg`) to Bluesky, posts it, and verifies:
+   - GtS home timeline status includes media attachment
+   - bridge object endpoint includes ActivityPub `attachment`
 
 ## Manual Bring-Up (Debug Path)
 

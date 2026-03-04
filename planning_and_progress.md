@@ -104,6 +104,14 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
 - Extended automated live E2E coverage:
   - validates threaded timeline delivery (`root` + `reply` linkage)
   - validates bridge outbox/object read endpoints for same thread
+- Implemented media attachment mapping:
+  - maps Bluesky image/video blob embeds to ActivityPub `attachment` using public `com.atproto.sync.getBlob` URLs
+  - maps external/record/recordWithMedia embed variants into ActivityPub link/document attachments
+  - includes unit tests for image/video/recordWithMedia mapping
+- Extended live E2E with media verification:
+  - uploads local fixture `tests/data/example_image.jpg` to Bluesky and posts with image embed
+  - asserts GtS timeline receives media attachment
+  - asserts bridged object endpoint includes ActivityPub `attachment`
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
@@ -114,7 +122,7 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
 - Result:
   - automated suite passing (26/26)
   - local E2E harness succeeds
-  - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including reply linkage and bridge read-surface checks
+  - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including reply linkage, bridge read-surface checks, and media attachment propagation
 
 ## Next Milestone
 CI-ready live E2E execution strategy:
@@ -123,9 +131,6 @@ CI-ready live E2E execution strategy:
 - Add automatic artifact retention (run dir, queue/state snapshots) on failure.
 
 ## TODO
-- Media mapping:
-  - Map Bluesky embed/view media into ActivityPub attachments (`Image`/`Document`) with alt text.
-  - Add deterministic unit tests using local fixtures in `tests/data/` (`example_image.jpg`, `example_video.mp4`).
 - Federation compatibility hardening:
   - Add RFC 9421 HTTP Message Signatures support alongside current cavage-style signatures.
 - Production durability/ops:

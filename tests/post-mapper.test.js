@@ -190,3 +190,83 @@ test("mapBskyPostToActivityPub supports explicit public visibility", () => {
   assert.deepEqual(result.note.to, ["https://www.w3.org/ns/activitystreams#Public"]);
   assert.deepEqual(result.note.cc, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
 });
+
+test("mapBskyPostToActivityPub maps image blob embeds to attachments", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post8",
+    record: {
+      text: "image post",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      embed: {
+        $type: "app.bsky.embed.images",
+        images: [
+          {
+            alt: "bridge image",
+            image: {
+              $type: "blob",
+              ref: {
+                $link: "bafkreihabcdef"
+              },
+              mimeType: "image/jpeg"
+            }
+          }
+        ]
+      }
+    }
+  });
+
+  assert.equal(Array.isArray(result.note.attachment), true);
+  assert.equal(result.note.attachment.length, 1);
+  assert.deepEqual(result.note.attachment[0], {
+    type: "Image",
+    url: "https://bsky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Aalice&cid=bafkreihabcdef",
+    mediaType: "image/jpeg",
+    name: "bridge image"
+  });
+});
+
+test("mapBskyPostToActivityPub maps recordWithMedia embeds", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post9",
+    record: {
+      text: "quote + media",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      embed: {
+        $type: "app.bsky.embed.recordWithMedia",
+        record: {
+          $type: "app.bsky.embed.record",
+          record: {
+            uri: "at://did:plc:bob/app.bsky.feed.post/root7"
+          }
+        },
+        media: {
+          $type: "app.bsky.embed.video",
+          alt: "bridge video",
+          video: {
+            $type: "blob",
+            ref: {
+              $link: "bafkreivideo123"
+            },
+            mimeType: "video/mp4"
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(result.note.attachment.length, 2);
+  assert.deepEqual(result.note.attachment[0], {
+    type: "Link",
+    url: "https://bsky.app/profile/did:plc:bob/post/root7"
+  });
+  assert.deepEqual(result.note.attachment[1], {
+    type: "Document",
+    url: "https://bsky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Aalice&cid=bafkreivideo123",
+    mediaType: "video/mp4",
+    name: "bridge video"
+  });
+});

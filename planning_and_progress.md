@@ -158,6 +158,14 @@ Federation compatibility and production hardening:
   - Return canonical bridge URLs suitable for Mastodon/GtS search for both actor and post discovery.
   - Fetch/materialize actors and posts on demand when not yet cached so discovery does not depend on pre-seeding.
   - Guarantee old bridged posts remain dereferenceable for federation fetches (e.g. repost/boost retrieval by other instances).
+- Priority P0: bridged Bluesky profile/post fidelity and lazy retrieval:
+  - Represent bridged actors with accurate profile metadata: avatar, description, and banner.
+  - Mark bridged actors as bot accounts in ActivityPub.
+  - Prepend actor profile summary with a notice line stating the account is bridged by `{service-url}` and does not receive interactions.
+  - Support pinned posts in actor representation/outbox as expected by AP consumers.
+  - Ensure configurable caching strategy for actor/profile/post data and on-demand retrieval for uncached users/posts.
+  - Support reposts and quote posts correctly, including cases where the referenced/reposted user is not followed by anyone.
+  - Ensure Bluesky mentions resolve to bridged AP account links (not only Bluesky web URLs) wherever possible.
 - Federation compatibility hardening:
   - Add inbound RFC9421 message-signature verification path alongside the current cavage verifier.
 - Production durability/ops:

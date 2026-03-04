@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Build a runnable bridge pipeline that can ingest Jetstream events and produce signed ActivityPub deliveries end-to-end.
+Move the bridge from isolated pipeline pieces to realistic network lifecycle behavior: Jetstream subscription management, remote actor discovery for follows, and signed outbound accept delivery.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -35,23 +35,33 @@ Build a runnable bridge pipeline that can ingest Jetstream events and produce si
 - Implemented outbound delivery mechanics:
   - HTTP `Digest` generation
   - draft-cavage-style HTTP Signature header generation for POST inbox delivery
+  - signed GET header generation for remote actor discovery
   - delivery worker with success, permanent-failure, retry scheduling, and capped exponential backoff
 - Implemented runtime orchestration layer:
   - single runtime that wires ingestion processor + queue + delivery worker
-  - drain loop for queued deliveries
+  - delivery drain loop
+  - Jetstream client start/stop/update hooks
+- Implemented Jetstream WebSocket lifecycle client:
+  - subscription URL builder with wanted collection/DID filters
+  - cursor rewind on reconnect/start
+  - options update messages for dynamic DID updates
+  - auto-reconnect scheduling on disconnect
+- Implemented remote actor discovery for follow requests:
+  - resolves follower inbox/sharedInbox via signed GET when follow payload only contains actor ID
+  - queues outbound `Accept` delivery after follow acceptance
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
 - Test command: `npm test`
-- Result: all tests passing (10/10)
+- Result: all tests passing (13/13)
 
 ## Next Milestone
-Integrate real protocol endpoints and network flows:
-- Add real Jetstream WebSocket subscription lifecycle with reconnect cursor rewind.
-- Add remote follower actor discovery fetch (resolve inbox/sharedInbox from actor object).
-- Add outbound signed `Accept` delivery from inbox follow handling.
-- Add integration tests with mocked WebSocket Jetstream stream and mocked remote inbox actors.
+Add durable and protocol-hardening pieces before live federation trials:
+- Persist state and queue (SQLite first) for restart-safe operation.
+- Implement remote actor fetch caching and invalidation strategy.
+- Add inbound signature verification for ActivityPub inbox requests.
+- Add end-to-end integration test harness with mocked Jetstream stream and remote ActivityPub server behavior (including retry/permanent-failure paths).
 
 ## Notes
 - Current state is intentionally in-memory for fast iteration and deterministic tests.
-- Persistent storage (SQLite/Postgres) is required before restart-safe reliability and production operation.
+- Real deployment requires persistent storage and inbox request signature verification.

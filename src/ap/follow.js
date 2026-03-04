@@ -30,13 +30,14 @@ export function processInboxActivity({ activity, targetDid, baseUrl, store }) {
     };
   }
 
-  const followerActorId = normalizeActorId(activity.actor);
+  const resolvedFollower = normalizeResolvedFollower(activity.resolvedFollower);
+  const followerActorId = resolvedFollower?.actorId ?? normalizeActorId(activity.actor);
 
   const follower = store.addFollower(targetDid, {
     actorId: followerActorId,
     followActivityId: normalizeOptionalString(activity.id),
-    inboxUrl: extractOptionalInbox(activity.actor),
-    sharedInboxUrl: extractOptionalSharedInbox(activity.actor)
+    inboxUrl: resolvedFollower?.inboxUrl ?? extractOptionalInbox(activity.actor),
+    sharedInboxUrl: resolvedFollower?.sharedInboxUrl ?? extractOptionalSharedInbox(activity.actor)
   });
 
   const accept = buildAcceptActivity({
@@ -131,4 +132,24 @@ function ensureHttpUrl(value, fieldName) {
 
 function normalizeOptionalString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeResolvedFollower(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value !== "object") {
+    throw new Error("resolvedFollower must be an object");
+  }
+
+  if (typeof value.actorId !== "string") {
+    throw new Error("resolvedFollower.actorId must be a string");
+  }
+
+  return {
+    actorId: ensureHttpUrl(value.actorId, "resolvedFollower.actorId"),
+    inboxUrl: value.inboxUrl ? ensureHttpUrl(value.inboxUrl, "resolvedFollower.inboxUrl") : null,
+    sharedInboxUrl: value.sharedInboxUrl ? ensureHttpUrl(value.sharedInboxUrl, "resolvedFollower.sharedInboxUrl") : null
+  };
 }

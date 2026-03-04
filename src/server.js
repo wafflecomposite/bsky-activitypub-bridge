@@ -2,12 +2,13 @@ import http from "node:http";
 import { URL } from "node:url";
 import { buildActorDocument } from "./ap/actor.js";
 import { processInboxActivity } from "./ap/follow.js";
+import { resolveFollowerEndpoints } from "./ap/remote-actor.js";
 import { resolveWebFingerResource } from "./ap/webfinger.js";
 import { InMemoryKeyManager } from "./crypto/key-manager.js";
 import { decodeDidFromPath } from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
 
-export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager() } = {}) {
+export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null } = {}) {
   let publicBaseUrl = baseUrl;
 
   const server = http.createServer(async (req, res) => {
@@ -21,7 +22,9 @@ export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeS
         bodyText,
         store,
         keyManager,
-        baseUrl: publicBaseUrl
+        baseUrl: publicBaseUrl,
+        fetchImpl,
+        deliveryQueue
       });
 
       sendJsonResponse(res, response);
@@ -81,12 +84,13 @@ export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeS
     stop,
     store,
     keyManager,
+    deliveryQueue,
     server,
     getBaseUrl: () => publicBaseUrl
   };
 }
 
-export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, bodyText = "", store, keyManager, baseUrl }) {
+export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, bodyText = "", store, keyManager, baseUrl, fetchImpl = fetch, deliveryQueue = null }) {
   if (!baseUrl) {
     throw new Error("Public base URL is not configured");
   }
@@ -103,7 +107,7 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
   }
 
   if (method === "POST" && url.pathname.startsWith("/ap/actor/") && url.pathname.endsWith("/inbox")) {
-    return handlePostInbox({ url, store, publicBaseUrl: baseUrl, bodyText });
+    return handlePostInbox({ url, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue });
   }
 
   return {
@@ -193,7 +197,7 @@ function handleGetActor({ url, store, keyManager, publicBaseUrl }) {
   };
 }
 
-function handlePostInbox({ url, store, publicBaseUrl, bodyText }) {
+async function handlePostInbox({ url, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length, -"/inbox".length);
@@ -227,8 +231,22 @@ function handlePostInbox({ url, store, publicBaseUrl, bodyText }) {
 
   let result;
   try {
+    let resolvedFollower = null;
+    if (activity.type === "Follow") {
+      resolvedFollower = await resolveFollowerEndpoints({
+        activity,
+        targetDid: did,
+        baseUrl: publicBaseUrl,
+        keyManager,
+        fetchImpl
+      });
+    }
+
     result = processInboxActivity({
-      activity,
+      activity: {
+        ...activity,
+        resolvedFollower
+      },
       targetDid: did,
       baseUrl: publicBaseUrl,
       store
@@ -239,6 +257,16 @@ function handlePostInbox({ url, store, publicBaseUrl, bodyText }) {
       contentType: "application/json",
       body: { error: error.message }
     };
+  }
+
+  if (result.status === 202 && deliveryQueue && result.body.follower?.inboxUrl && result.body.accept) {
+    deliveryQueue.enqueue({
+      did,
+      destination: result.body.follower.inboxUrl,
+      recipientActorIds: [result.body.follower.actorId],
+      operation: "follow-accept",
+      activity: result.body.accept
+    });
   }
 
   return {

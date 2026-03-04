@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createVerify, generateKeyPairSync } from "node:crypto";
-import { buildDigestHeader, createSignedPostHeaders } from "../src/federation/http-signature.js";
+import { buildDigestHeader, createSignedGetHeaders, createSignedPostHeaders } from "../src/federation/http-signature.js";
 
 test("buildDigestHeader produces SHA-256 digest value", () => {
   const digest = buildDigestHeader('{"ok":true}');
@@ -50,3 +50,28 @@ function parseSignatureHeader(value) {
 
   return out;
 }
+
+test("createSignedGetHeaders signs request-target host date", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" }
+  });
+
+  const headers = createSignedGetHeaders({
+    destination: "https://remote.example/users/bob",
+    keyId: "https://bridge.example/ap/actor/did%3Aplc%3Aalice#main-key",
+    privateKeyPem: privateKey,
+    date: new Date("2026-03-04T00:00:00.000Z")
+  });
+
+  const parsed = parseSignatureHeader(headers.signature);
+  const signingString = [
+    "(request-target): get /users/bob",
+    "host: remote.example",
+    `date: ${headers.date}`
+  ].join("\n");
+
+  const verified = createVerify("RSA-SHA256").update(signingString).verify(publicKey, parsed.signature, "base64");
+  assert.equal(verified, true);
+});

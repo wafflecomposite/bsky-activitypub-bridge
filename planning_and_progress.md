@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Harden bridge trust and protocol behavior so inbox traffic can be validated and processing remains deterministic under realistic federation conditions.
+Move the bridge from in-memory-only operation to restart-safe durability while keeping protocol handling validated by tests.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -9,9 +9,6 @@ Harden bridge trust and protocol behavior so inbox traffic can be validated and 
   - acct URI parsing/validation
   - handle and DID validation
   - stable actor/object/followers/outbox URL builders
-- Implemented in-memory persistence for:
-  - bridged actors (DID + handle + profile fields)
-  - follower relationships per actor DID
 - Implemented ActivityPub-facing primitives:
   - actor document generation (`Person` + public key material)
   - WebFinger JRD generation
@@ -28,10 +25,9 @@ Harden bridge trust and protocol behavior so inbox traffic can be validated and 
   - reply linkage conversion (`at://` parent -> web fallback URL)
   - self-label to content warning mapping (`sensitive` + `summary`)
 - Implemented ingestion/fanout pipeline primitives:
-  - in-memory Jetstream cursor and dedup state
   - delivery target planner (shared inbox grouping + inbox fallback)
   - Jetstream commit processor for post create/update/delete
-  - in-memory outbound delivery queue
+  - outbound delivery queue interface
 - Implemented outbound delivery mechanics:
   - HTTP `Digest` generation
   - draft-cavage-style HTTP Signature header generation for POST inbox delivery
@@ -57,18 +53,23 @@ Harden bridge trust and protocol behavior so inbox traffic can be validated and 
   - public key lookup from remote actor document via `keyId`
   - RSA signature verification over signed header list
   - server-side 401 rejection on verification failure
+- Implemented file-backed durability components:
+  - file-backed bridge store (actors + followers)
+  - file-backed Jetstream cursor/dedup state
+  - file-backed outbound delivery queue
+  - restart recovery integration proving queued delivery replay and cursor continuity
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
 - Test command: `npm test`
-- Result: all tests passing (15/15)
+- Result: all tests passing (19/19)
 
 ## Next Milestone
-Add durability and execution-level E2E validation:
-- Persist queue/state (SQLite-backed) for restart-safe operation.
-- Add a local executable E2E harness that simulates Jetstream stream + remote ActivityPub server behavior.
-- Add restart/recovery tests proving cursor continuity and queued delivery replay.
+Build executable end-to-end harnesses and federation readiness checks:
+- Add a local runnable script that boots bridge runtime + mocked Jetstream source + mocked remote ActivityPub server.
+- Add scenario tests for reconnect, retries, and permanent inbox failures end-to-end.
+- Add optional strict mode in server startup to enforce signature verification in all inbox POST handling.
 
 ## Notes
-- Current state is intentionally in-memory for fast iteration and deterministic tests.
-- Before live federation trials, persistent storage is required.
+- Durable state is currently JSON-file-backed for zero-dependency reliability in local/dev environments.
+- For higher-scale production usage, move persistence from JSON files to SQLite/Postgres.

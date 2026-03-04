@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import {
   buildGtsRequest,
   evaluateTimelineThread,
+  extractPostRkeyFromAtUri,
   extractTunnelUrlFromLine,
   loadLiveE2ECredentials
 } from "../src/e2e/live-harness.js";
@@ -171,4 +172,17 @@ test("evaluateTimelineThread reports unlinked markers when reply relation missin
   assert.equal(result.rootFound, true);
   assert.equal(result.replyFound, true);
   assert.equal(result.threadLinked, false);
+});
+
+test("extractPostRkeyFromAtUri extracts rkey", () => {
+  assert.equal(
+    extractPostRkeyFromAtUri("at://did:plc:alice/app.bsky.feed.post/3mgam4k7asq2g"),
+    "3mgam4k7asq2g"
+  );
+});
+
+test("extractPostRkeyFromAtUri rejects non-post at uri", () => {
+  assert.throws(() => {
+    extractPostRkeyFromAtUri("at://did:plc:alice/app.bsky.actor.profile/self");
+  }, /Invalid AT URI for post/);
 });

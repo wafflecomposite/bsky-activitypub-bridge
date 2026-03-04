@@ -49,6 +49,34 @@ export class JetstreamProcessor {
       };
     }
 
+    let activity;
+    try {
+      activity = mapEventToActivity({
+        baseUrl: this.#baseUrl,
+        did: parsed.did,
+        rkey: parsed.rkey,
+        operation: parsed.operation,
+        record: parsed.record,
+        visibility: this.#postVisibility
+      });
+    } catch (error) {
+      return {
+        status: "invalid-event",
+        cursor: note.cursor,
+        enqueued: 0,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+
+    persistMappedActivity({
+      store: this.#store,
+      did: parsed.did,
+      rkey: parsed.rkey,
+      operation: parsed.operation,
+      activity,
+      cursor: note.cursor
+    });
+
     const followers = this.#store.listFollowers(parsed.did);
     if (followers.length === 0) {
       return {
@@ -66,25 +94,6 @@ export class JetstreamProcessor {
         cursor: note.cursor,
         enqueued: 0,
         skipped: deliveryPlan.skipped
-      };
-    }
-
-    let activity;
-    try {
-      activity = mapEventToActivity({
-        baseUrl: this.#baseUrl,
-        did: parsed.did,
-        rkey: parsed.rkey,
-        operation: parsed.operation,
-        record: parsed.record,
-        visibility: this.#postVisibility
-      });
-    } catch (error) {
-      return {
-        status: "invalid-event",
-        cursor: note.cursor,
-        enqueued: 0,
-        error: error instanceof Error ? error.message : String(error)
       };
     }
 
@@ -240,4 +249,23 @@ function normalizeTimeUs(value) {
   }
 
   return null;
+}
+
+function persistMappedActivity({ store, did, rkey, operation, activity, cursor }) {
+  if (typeof store?.upsertObjectActivity !== "function") {
+    return;
+  }
+
+  const object = activity?.object && typeof activity.object === "object"
+    ? activity.object
+    : null;
+
+  store.upsertObjectActivity({
+    did,
+    rkey,
+    operation,
+    object,
+    activity,
+    cursor
+  });
 }

@@ -5,7 +5,7 @@ import { processInboxActivity } from "./ap/follow.js";
 import { resolveFollowerEndpoints } from "./ap/remote-actor.js";
 import { resolveWebFingerResource } from "./ap/webfinger.js";
 import { InMemoryKeyManager } from "./crypto/key-manager.js";
-import { actorFollowersId, actorOutboxId, assertDid, decodeDidFromPath, parseAcctResource } from "./domain/identifiers.js";
+import { actorFollowersId, actorOutboxId, assertDid, decodeDidFromPath, objectId, parseAcctResource } from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
 
 export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null, actorCache = null, inboxSignatureVerifier = null } = {}) {
@@ -116,6 +116,10 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
     }
 
     return handleGetActor({ url, store, keyManager, publicBaseUrl: baseUrl });
+  }
+
+  if (method === "GET" && url.pathname.startsWith("/ap/object/")) {
+    return handleGetObject({ url, store, publicBaseUrl: baseUrl });
   }
 
   if (method === "POST" && url.pathname.startsWith("/ap/actor/") && url.pathname.endsWith("/inbox")) {
@@ -330,6 +334,11 @@ function handleGetOutbox({ url, store, publicBaseUrl }) {
     };
   }
 
+  const limit = parseCollectionLimit(url.searchParams.get("limit"), 20);
+  const items = typeof store.listOutboxActivities === "function"
+    ? store.listOutboxActivities(did, { limit })
+    : [];
+
   return {
     status: 200,
     contentType: "application/activity+json",
@@ -337,9 +346,72 @@ function handleGetOutbox({ url, store, publicBaseUrl }) {
       "@context": "https://www.w3.org/ns/activitystreams",
       id: actorOutboxId(publicBaseUrl, did),
       type: "OrderedCollection",
-      totalItems: 0,
-      orderedItems: []
+      totalItems: items.length,
+      orderedItems: items
     }
+  };
+}
+
+function handleGetObject({ url, store, publicBaseUrl }) {
+  const match = /^\/ap\/object\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+  if (!match) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: "Invalid object path" }
+    };
+  }
+
+  let did;
+  let rkey;
+  try {
+    did = decodeDidFromPath(match[1]);
+    rkey = decodeURIComponent(match[2]);
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: error.message }
+    };
+  }
+
+  if (!store.getActorByDid(did)) {
+    return {
+      status: 404,
+      contentType: "application/json",
+      body: { error: "Bridge actor not found" }
+    };
+  }
+
+  const record = typeof store.getObjectByRkey === "function"
+    ? store.getObjectByRkey(did, rkey)
+    : null;
+
+  if (!record) {
+    return {
+      status: 404,
+      contentType: "application/json",
+      body: { error: "Object not found" }
+    };
+  }
+
+  if (record.deleted) {
+    const id = record?.activity?.object ?? record?.object?.id ?? objectId(publicBaseUrl, did, rkey);
+    return {
+      status: 410,
+      contentType: "application/activity+json",
+      body: {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        id,
+        type: "Tombstone"
+      }
+    };
+  }
+
+  return {
+    status: 200,
+    contentType: "application/activity+json",
+    body: record.object
   };
 }
 
@@ -490,4 +562,13 @@ function sendJsonResponse(res, response) {
     "content-length": Buffer.byteLength(data)
   });
   res.end(data);
+}
+
+function parseCollectionLimit(value, fallback) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(parsed, 1), 80);
 }

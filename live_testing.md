@@ -50,6 +50,10 @@ The harness:
 4. Restarts bridge in ingest mode (Jetstream on, wanted DID pinned).
 5. Publishes a real Bluesky self-thread (`root` + `reply`) and waits for both posts on GtS home timeline.
 6. Verifies the received reply is linked to the received root (`in_reply_to_id`/`in_reply_to_uri`).
+7. Verifies bridge read endpoints for the same thread:
+   - actor outbox contains both root and reply activities
+   - object endpoint returns both notes
+   - reply object references bridged root object via `inReplyTo`
 
 ## Manual Bring-Up (Debug Path)
 

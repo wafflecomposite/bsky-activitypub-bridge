@@ -93,6 +93,14 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - reply root now maps into ActivityPub `context` for better thread continuity
 - Documented media test fixtures:
   - added `tests/data/README.md` describing available local image/video fixtures and usage guidance
+- Implemented cached read-surface for bridged posts:
+  - object/activity persistence in in-memory and file-backed stores
+  - `GET /ap/object/{did}/{rkey}` endpoint with tombstone response for deleted objects
+  - outbox endpoint now serves cached activities instead of static empty collection
+  - ingest path now persists mapped activities even when no followers are present
+- Extended automated live E2E coverage:
+  - validates threaded timeline delivery (`root` + `reply` linkage)
+  - validates bridge outbox/object read endpoints for same thread
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
@@ -103,7 +111,7 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
 - Result:
   - automated suite passing (26/26)
   - local E2E harness succeeds
-  - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel
+  - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including reply linkage and bridge read-surface checks
 
 ## Next Milestone
 CI-ready live E2E execution strategy:
@@ -112,16 +120,11 @@ CI-ready live E2E execution strategy:
 - Add automatic artifact retention (run dir, queue/state snapshots) on failure.
 
 ## TODO
-- Automatic WebFinger onboarding:
-  - Resolve unknown Bluesky handles to DID at discovery time.
-  - Materialize/update actor profile in store on first lookup/follow.
 - Reply/thread fidelity:
   - Expand thread context handling for non-self replies where bridged parent objects exist.
 - Media mapping:
   - Map Bluesky embed/view media into ActivityPub attachments (`Image`/`Document`) with alt text.
   - Add deterministic unit tests using local fixtures in `tests/data/` (`example_image.jpg`, `example_video.mp4`).
-- AP read-surface completeness:
-  - Implement object dereference endpoint and non-empty outbox pagination backed by cached activities.
 - Federation compatibility hardening:
   - Add RFC 9421 HTTP Message Signatures support alongside current cavage-style signatures.
 - Production durability/ops:

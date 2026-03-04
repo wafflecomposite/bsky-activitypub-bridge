@@ -122,8 +122,23 @@ export async function runLiveE2EHarness({
       log
     });
 
+    const rootRkey = extractPostRkeyFromAtUri(postedThread.root.uri);
+    const replyRkey = extractPostRkeyFromAtUri(postedThread.reply.uri);
+    const bridgeReadSurface = await waitForBridgeThreadReadSurface({
+      tunnelUrl,
+      did,
+      rootRkey,
+      replyRkey,
+      rootMarker: postedThread.root.marker,
+      replyMarker: postedThread.reply.marker,
+      timeoutMs: 90_000,
+      log
+    });
+
     const summary = {
-      ok: followState.following === true && timelineThread.threadLinked === true,
+      ok: followState.following === true
+        && timelineThread.threadLinked === true
+        && bridgeReadSurface.ok === true,
       tunnelUrl,
       dataDir: tempDir,
       remoteAcct,
@@ -131,7 +146,8 @@ export async function runLiveE2EHarness({
       discovered,
       followState,
       postedThread,
-      timelineThread
+      timelineThread,
+      bridgeReadSurface
     };
 
     return summary;
@@ -515,10 +531,96 @@ export function evaluateTimelineThread({ statuses, rootMarker, replyMarker }) {
   };
 }
 
+export function extractPostRkeyFromAtUri(uri) {
+  const match = /^at:\/\/[^/]+\/app\.bsky\.feed\.post\/([^/?#]+)$/.exec(uri ?? "");
+  if (!match) {
+    throw new Error(`Invalid AT URI for post: ${uri}`);
+  }
+
+  return match[1];
+}
+
 function statusContainsMarker(status, marker) {
   const content = typeof status?.content === "string" ? status.content : "";
   const text = typeof status?.text === "string" ? status.text : "";
   return content.includes(marker) || text.includes(marker);
+}
+
+async function waitForBridgeThreadReadSurface({
+  tunnelUrl,
+  did,
+  rootRkey,
+  replyRkey,
+  rootMarker,
+  replyMarker,
+  timeoutMs,
+  log
+}) {
+  const startedAt = Date.now();
+  let last = {
+    outboxHasRoot: false,
+    outboxHasReply: false,
+    rootObjectFound: false,
+    replyObjectFound: false,
+    replyLinkedToRoot: false
+  };
+
+  const encodedDid = encodeURIComponent(did);
+  const rootObjectId = `${tunnelUrl}/ap/object/${encodedDid}/${encodeURIComponent(rootRkey)}`;
+  const replyObjectId = `${tunnelUrl}/ap/object/${encodedDid}/${encodeURIComponent(replyRkey)}`;
+  const outboxUrl = `${tunnelUrl}/ap/actor/${encodedDid}/outbox?limit=40`;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const outboxResponse = await fetch(outboxUrl);
+      const outboxBody = outboxResponse.ok ? await outboxResponse.json() : null;
+      const items = Array.isArray(outboxBody?.orderedItems) ? outboxBody.orderedItems : [];
+
+      const outboxHasRoot = items.some((activity) => {
+        const content = typeof activity?.object?.content === "string" ? activity.object.content : "";
+        return content.includes(rootMarker);
+      });
+
+      const outboxHasReply = items.some((activity) => {
+        const content = typeof activity?.object?.content === "string" ? activity.object.content : "";
+        return content.includes(replyMarker);
+      });
+
+      const rootResponse = await fetch(rootObjectId);
+      const rootObject = rootResponse.ok ? await rootResponse.json() : null;
+
+      const replyResponse = await fetch(replyObjectId);
+      const replyObject = replyResponse.ok ? await replyResponse.json() : null;
+
+      const rootObjectFound = rootResponse.ok
+        && typeof rootObject?.content === "string"
+        && rootObject.content.includes(rootMarker);
+      const replyObjectFound = replyResponse.ok
+        && typeof replyObject?.content === "string"
+        && replyObject.content.includes(replyMarker);
+      const replyLinkedToRoot = replyObjectFound && replyObject?.inReplyTo === rootObjectId;
+
+      last = {
+        outboxHasRoot,
+        outboxHasReply,
+        rootObjectFound,
+        replyObjectFound,
+        replyLinkedToRoot
+      };
+
+      if (outboxHasRoot && outboxHasReply && rootObjectFound && replyObjectFound && replyLinkedToRoot) {
+        return { ok: true, ...last };
+      }
+
+      log(`bridge-read progress outboxRoot=${outboxHasRoot} outboxReply=${outboxHasReply} rootObj=${rootObjectFound} replyObj=${replyObjectFound} linked=${replyLinkedToRoot}`);
+    } catch (error) {
+      log(`bridge-read retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(2_000);
+  }
+
+  return { ok: false, ...last };
 }
 
 async function gtsApi({ instanceUrl, accessToken, path, method = "GET", timeoutMs = 30_000, body = null }) {

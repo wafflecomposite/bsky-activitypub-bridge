@@ -229,3 +229,26 @@ test("JetstreamProcessor preserves self-thread reply linkage", () => {
     "https://bridge.example/ap/object/did%3Aplc%3Aalice/thread-root"
   );
 });
+
+test("JetstreamProcessor caches mapped object even when there are no followers", () => {
+  const { store, processor } = createProcessorFixture();
+  store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 902,
+    commit: {
+      collection: "app.bsky.feed.post",
+      operation: "create",
+      rkey: "cached-without-followers",
+      record: {
+        text: "cache me",
+        createdAt: "2026-03-04T00:00:00.000Z"
+      }
+    }
+  });
+
+  assert.equal(result.status, "no-followers");
+  const cached = store.getObjectByRkey("did:plc:alice", "cached-without-followers");
+  assert.equal(cached?.object?.type, "Note");
+});

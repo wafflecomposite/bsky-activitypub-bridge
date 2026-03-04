@@ -55,6 +55,7 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   });
   assert.equal(outboxRes.status, 200);
   assert.equal(outboxRes.body.type, "OrderedCollection");
+  assert.equal(outboxRes.body.totalItems, 0);
 
   const followRes = await dispatchBridgeRequest({
     method: "POST",
@@ -91,6 +92,110 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   });
   assert.equal(followersRes.status, 200);
   assert.equal(followersRes.body.totalItems, 1);
+});
+
+test("dispatchBridgeRequest serves object and outbox from cached activities", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social"
+  });
+
+  store.upsertObjectActivity({
+    did: "did:plc:alice",
+    rkey: "root1",
+    operation: "create",
+    object: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/root1",
+      type: "Note",
+      published: "2026-03-04T00:00:01.000Z",
+      content: "root"
+    },
+    activity: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/root1/activity/create",
+      type: "Create",
+      published: "2026-03-04T00:00:01.000Z",
+      object: {
+        id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/root1",
+        type: "Note"
+      }
+    }
+  });
+
+  store.upsertObjectActivity({
+    did: "did:plc:alice",
+    rkey: "reply1",
+    operation: "create",
+    object: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/reply1",
+      type: "Note",
+      published: "2026-03-04T00:00:02.000Z",
+      content: "reply",
+      inReplyTo: "https://bridge.example/ap/object/did%3Aplc%3Aalice/root1"
+    },
+    activity: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/reply1/activity/create",
+      type: "Create",
+      published: "2026-03-04T00:00:02.000Z",
+      object: {
+        id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/reply1",
+        type: "Note"
+      }
+    }
+  });
+
+  const objectRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/object/did%3Aplc%3Aalice/reply1",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl
+  });
+
+  assert.equal(objectRes.status, 200);
+  assert.equal(objectRes.body.type, "Note");
+  assert.equal(objectRes.body.inReplyTo, "https://bridge.example/ap/object/did%3Aplc%3Aalice/root1");
+
+  const outboxRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/outbox?limit=1",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl
+  });
+
+  assert.equal(outboxRes.status, 200);
+  assert.equal(outboxRes.body.type, "OrderedCollection");
+  assert.equal(outboxRes.body.totalItems, 1);
+  assert.equal(outboxRes.body.orderedItems[0].id, "https://bridge.example/ap/object/did%3Aplc%3Aalice/reply1/activity/create");
+
+  store.upsertObjectActivity({
+    did: "did:plc:alice",
+    rkey: "root1",
+    operation: "delete",
+    activity: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/root1/activity/delete",
+      type: "Delete",
+      object: "https://bridge.example/ap/object/did%3Aplc%3Aalice/root1"
+    }
+  });
+
+  const deletedRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/object/did%3Aplc%3Aalice/root1",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl
+  });
+
+  assert.equal(deletedRes.status, 410);
+  assert.equal(deletedRes.body.type, "Tombstone");
 });
 
 test("dispatchBridgeRequest can auto-materialize actor on WebFinger lookup", async () => {

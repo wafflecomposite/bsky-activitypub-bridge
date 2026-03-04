@@ -25,3 +25,36 @@ test("FileBridgeStore persists actors and followers", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("FileBridgeStore persists object cache and outbox activity list", () => {
+  const dir = mkdtempSync(join(tmpdir(), "bridge-store-"));
+  const filePath = join(dir, "store.json");
+
+  try {
+    const store1 = new FileBridgeStore({ filePath });
+    store1.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+    store1.upsertObjectActivity({
+      did: "did:plc:alice",
+      rkey: "post-1",
+      operation: "create",
+      object: {
+        id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/post-1",
+        type: "Note",
+        published: "2026-03-04T00:00:01.000Z"
+      },
+      activity: {
+        id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/post-1/activity/create",
+        type: "Create",
+        published: "2026-03-04T00:00:01.000Z"
+      }
+    });
+
+    const store2 = new FileBridgeStore({ filePath });
+    const object = store2.getObjectByRkey("did:plc:alice", "post-1");
+    assert.equal(object.deleted, false);
+    assert.equal(object.object.type, "Note");
+    assert.equal(store2.listOutboxActivities("did:plc:alice").length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

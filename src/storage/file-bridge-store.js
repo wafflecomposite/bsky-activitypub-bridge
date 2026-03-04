@@ -7,6 +7,7 @@ export class FileBridgeStore {
   #actorsByDid = new Map();
   #didByHandle = new Map();
   #followersByDid = new Map();
+  #recordsByDid = new Map();
 
   constructor({ filePath }) {
     if (!filePath) {
@@ -96,6 +97,63 @@ export class FileBridgeStore {
     return dids.sort();
   }
 
+  upsertObjectActivity({ did, rkey, operation, object = null, activity = null, cursor = null }) {
+    const actorDid = assertDid(did);
+    const normalizedRkey = normalizeRkey(rkey);
+    const normalizedOperation = normalizeOperation(operation);
+    const existing = this.getObjectByRkey(actorDid, normalizedRkey);
+
+    let records = this.#recordsByDid.get(actorDid);
+    if (!records) {
+      records = new Map();
+      this.#recordsByDid.set(actorDid, records);
+    }
+
+    const nowIso = new Date().toISOString();
+    const next = {
+      rkey: normalizedRkey,
+      operation: normalizedOperation,
+      object: object ?? existing?.object ?? null,
+      activity: activity ?? existing?.activity ?? null,
+      deleted: normalizedOperation === "delete",
+      cursor: typeof cursor === "number" && Number.isFinite(cursor)
+        ? cursor
+        : existing?.cursor ?? null,
+      publishedAt: readPublishedAt(object, activity) ?? existing?.publishedAt ?? nowIso,
+      updatedAt: nowIso
+    };
+
+    records.set(normalizedRkey, next);
+    this.#persist();
+    return next;
+  }
+
+  getObjectByRkey(did, rkey) {
+    const actorDid = assertDid(did);
+    const normalizedRkey = normalizeRkey(rkey);
+    const records = this.#recordsByDid.get(actorDid);
+
+    if (!records) {
+      return null;
+    }
+
+    return records.get(normalizedRkey) ?? null;
+  }
+
+  listOutboxActivities(did, { limit = 20 } = {}) {
+    const actorDid = assertDid(did);
+    const records = this.#recordsByDid.get(actorDid);
+    if (!records) {
+      return [];
+    }
+
+    return Array.from(records.values())
+      .filter((entry) => entry.activity && typeof entry.activity === "object")
+      .sort((a, b) => compareIsoDatesDesc(a.publishedAt, b.publishedAt))
+      .slice(0, normalizeLimit(limit))
+      .map((entry) => entry.activity);
+  }
+
   #load() {
     if (!existsSync(this.#filePath)) {
       return;
@@ -136,20 +194,39 @@ export class FileBridgeStore {
 
       this.#followersByDid.set(did, map);
     }
+
+    for (const [did, records] of Object.entries(parsed.recordsByDid ?? {})) {
+      const map = new Map();
+      for (const record of records ?? []) {
+        if (typeof record?.rkey !== "string") {
+          continue;
+        }
+
+        map.set(record.rkey, record);
+      }
+
+      this.#recordsByDid.set(assertDid(did), map);
+    }
   }
 
   #persist() {
     const actors = Array.from(this.#actorsByDid.values());
     const followersByDid = {};
+    const recordsByDid = {};
 
     for (const [did, followers] of this.#followersByDid.entries()) {
       followersByDid[did] = Array.from(followers.values());
     }
 
+    for (const [did, records] of this.#recordsByDid.entries()) {
+      recordsByDid[did] = Array.from(records.values());
+    }
+
     mkdirSync(dirname(this.#filePath), { recursive: true });
     writeFileSync(this.#filePath, JSON.stringify({
       actors,
-      followersByDid
+      followersByDid,
+      recordsByDid
     }, null, 2));
   }
 }
@@ -165,4 +242,59 @@ function normalizeActorRef(value) {
   }
 
   return trimmed;
+}
+
+function normalizeRkey(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("Record rkey must be a non-empty string");
+  }
+
+  return value.trim();
+}
+
+function normalizeOperation(value) {
+  if (value === "create" || value === "update" || value === "delete") {
+    return value;
+  }
+
+  throw new Error(`Unsupported operation: ${value}`);
+}
+
+function readPublishedAt(object, activity) {
+  if (typeof object?.published === "string" && object.published) {
+    return object.published;
+  }
+
+  if (typeof activity?.published === "string" && activity.published) {
+    return activity.published;
+  }
+
+  return null;
+}
+
+function compareIsoDatesDesc(left, right) {
+  const leftTime = Date.parse(left ?? "");
+  const rightTime = Date.parse(right ?? "");
+
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
+    return rightTime - leftTime;
+  }
+
+  if (Number.isFinite(leftTime)) {
+    return -1;
+  }
+
+  if (Number.isFinite(rightTime)) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function normalizeLimit(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.min(Math.max(Math.trunc(value), 1), 80);
+  }
+
+  return 20;
 }

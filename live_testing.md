@@ -38,11 +38,20 @@ Run:
 npm run e2e:live
 ```
 
+CI-oriented runner (opt-in):
+
+```bash
+npm run e2e:live:ci
+```
+
 Optional env:
 - `LIVE_E2E_CREDENTIALS_FILE` (default: `test_credentials.json`)
 - `LIVE_E2E_CREDENTIALS_MD_FILE` (fallback default: `test_credentials.md`)
 - `LIVE_E2E_MEDIA_FIXTURE` (default: `tests/data/example_image.jpg`)
 - `LIVE_E2E_CLEANUP=1` to remove temporary workdir after run
+- `RUN_LIVE_E2E=1` required for `npm run e2e:live:ci` execution (otherwise it reports `skipped`)
+- `LIVE_E2E_ARTIFACTS_BASE_DIR` (default: `.data/live-e2e-artifacts`)
+- `LIVE_E2E_RUN_ID` (optional explicit artifact folder name)
 
 The harness:
 1. Starts a quick Cloudflare tunnel.

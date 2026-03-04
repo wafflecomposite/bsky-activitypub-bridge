@@ -112,6 +112,11 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - uploads local fixture `tests/data/example_image.jpg` to Bluesky and posts with image embed
   - asserts GtS timeline receives media attachment
   - asserts bridged object endpoint includes ActivityPub `attachment`
+- Implemented CI-friendly live E2E runner:
+  - new script `npm run e2e:live:ci` with explicit opt-in gate (`RUN_LIVE_E2E=1`)
+  - structured JSON output and persisted run summary/error artifacts
+  - artifact directory retention for failures (and optional cleanup for successful runs)
+  - helper module and tests for env parsing and artifact path resolution
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
@@ -125,10 +130,10 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including reply linkage, bridge read-surface checks, and media attachment propagation
 
 ## Next Milestone
-CI-ready live E2E execution strategy:
-- Gate live tests behind explicit opt-in environment flag and credential presence.
-- Add structured JSON log/events output for easier CI diagnostics.
-- Add automatic artifact retention (run dir, queue/state snapshots) on failure.
+Federation compatibility and production hardening:
+- Add RFC 9421 HTTP Message Signatures support alongside current cavage-style signatures.
+- Add metrics/health signals for queue depth, retry counts, and permanent delivery failures.
+- Plan migration path from JSON-file durability to SQLite/Postgres.
 
 ## TODO
 - Federation compatibility hardening:

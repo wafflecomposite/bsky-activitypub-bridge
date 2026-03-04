@@ -37,11 +37,11 @@ export class BridgeRuntime {
     return this.#processor.process(event);
   }
 
-  async drainDeliveries({ max = 100 } = {}) {
+  async drainDeliveries({ max = 100, now = Date.now() } = {}) {
     const results = [];
 
     for (let i = 0; i < max; i += 1) {
-      const result = await this.#worker.drainOnce();
+      const result = await this.#worker.drainOnce({ now });
       if (result.status === "empty") {
         break;
       }

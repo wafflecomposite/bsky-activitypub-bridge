@@ -49,7 +49,7 @@ export class DeliveryWorker {
       return this.#handleRetry(item, {
         reason: "network-error",
         detail: error instanceof Error ? error.message : String(error)
-      });
+      }, now);
     }
 
     if (response.status >= 200 && response.status < 300) {
@@ -71,10 +71,10 @@ export class DeliveryWorker {
     return this.#handleRetry(item, {
       reason: "http-error",
       code: response.status
-    });
+    }, now);
   }
 
-  #handleRetry(item, failure) {
+  #handleRetry(item, failure, now) {
     const attempts = (item.attempts ?? 0) + 1;
 
     if (attempts >= this.#maxAttempts) {
@@ -90,7 +90,7 @@ export class DeliveryWorker {
     this.#queue.enqueue({
       ...item,
       attempts,
-      nextAttemptAt: Date.now() + delayMs
+      nextAttemptAt: now + delayMs
     });
 
     return {

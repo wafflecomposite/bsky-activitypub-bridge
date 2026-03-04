@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Move the bridge from in-memory-only operation to restart-safe durability while keeping protocol handling validated by tests.
+Provide an executable end-to-end local validation loop for bridge behavior (ingest -> queue -> retry -> delivery) with durable state.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -58,18 +58,24 @@ Move the bridge from in-memory-only operation to restart-safe durability while k
   - file-backed Jetstream cursor/dedup state
   - file-backed outbound delivery queue
   - restart recovery integration proving queued delivery replay and cursor continuity
+- Implemented local executable E2E harness:
+  - reusable harness module for simulated ingest/retry/delivery flow
+  - runnable script `npm run e2e:local`
+  - harness test asserting retry-then-deliver semantics and cursor continuity
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
-- Test command: `npm test`
-- Result: all tests passing (19/19)
+- Test commands:
+  - `npm test`
+  - `npm run e2e:local`
+- Result: all tests passing (20/20) and local E2E harness succeeds.
 
 ## Next Milestone
-Build executable end-to-end harnesses and federation readiness checks:
-- Add a local runnable script that boots bridge runtime + mocked Jetstream source + mocked remote ActivityPub server.
-- Add scenario tests for reconnect, retries, and permanent inbox failures end-to-end.
-- Add optional strict mode in server startup to enforce signature verification in all inbox POST handling.
+Bridge-to-real-network readiness:
+- Add real Jetstream WebSocket adapter execution path in runtime startup (configurable endpoint + DID filter refresh loop).
+- Add HTTP transport abstraction for outbound inbox deliveries with structured metrics/logging hooks.
+- Add configurable strict server mode that always enforces inbox signature verification in production.
 
 ## Notes
-- Durable state is currently JSON-file-backed for zero-dependency reliability in local/dev environments.
+- Durability is currently JSON-file-backed for zero-dependency local/dev reliability.
 - For higher-scale production usage, move persistence from JSON files to SQLite/Postgres.

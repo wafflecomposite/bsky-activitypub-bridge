@@ -148,6 +148,22 @@ export class InMemoryBridgeStore {
       .slice(0, normalizeLimit(limit))
       .map((entry) => entry.activity);
   }
+
+  countOutboxActivities(did) {
+    const actorDid = assertDid(did);
+    const records = this.#recordsByDid.get(actorDid);
+    if (!records) {
+      return 0;
+    }
+
+    let total = 0;
+    for (const entry of records.values()) {
+      if (entry.activity && typeof entry.activity === "object") {
+        total += 1;
+      }
+    }
+    return total;
+  }
 }
 
 function normalizeActorRef(value) {

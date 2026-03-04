@@ -32,15 +32,24 @@ export function createBridgeApplication({
   createServer = createBridgeServer
 } = {}) {
   const resolvedStore = store ?? (dataDir
-    ? new FileBridgeStore({ filePath: join(dataDir, "store.json") })
+    ? new FileBridgeStore({
+      filePath: join(dataDir, "store.json"),
+      persistMode: "async"
+    })
     : new InMemoryBridgeStore());
 
   const resolvedState = state ?? (dataDir
-    ? new FileJetstreamState({ filePath: join(dataDir, "state.json") })
+    ? new FileJetstreamState({
+      filePath: join(dataDir, "state.json"),
+      persistMode: "async"
+    })
     : new InMemoryJetstreamState());
 
   const resolvedQueue = queue ?? (dataDir
-    ? new FileDeliveryQueue({ filePath: join(dataDir, "queue.json") })
+    ? new FileDeliveryQueue({
+      filePath: join(dataDir, "queue.json"),
+      persistMode: "async"
+    })
     : new InMemoryDeliveryQueue());
 
   const resolvedKeyManager = keyManager ?? (dataDir
@@ -98,6 +107,7 @@ export function createBridgeApplication({
           : null,
         wantedDidsRefreshMs: jetstream.wantedDidsRefreshMs ?? 30_000,
         wantedCollections: jetstream.wantedCollections ?? ["app.bsky.feed.post", "app.bsky.feed.repost"],
+        allowUnfiltered: jetstream.allowUnfiltered ?? false,
         jetstreamUrl: jetstream.url,
         reconnectDelayMs: jetstream.reconnectDelayMs ?? 1000,
         rewindSeconds: jetstream.rewindSeconds ?? 5,
@@ -131,6 +141,10 @@ export function createBridgeApplication({
       runtime = null;
     }
 
+    await flushIfSupported(resolvedQueue);
+    await flushIfSupported(resolvedState);
+    await flushIfSupported(resolvedStore);
+
     await server.stop();
   }
 
@@ -162,4 +176,16 @@ export function createBridgeApplication({
     server,
     inboxSignatureVerifier
   };
+}
+
+async function flushIfSupported(component) {
+  if (!component || typeof component.flush !== "function") {
+    return;
+  }
+
+  try {
+    await component.flush();
+  } catch {
+    // Best effort during shutdown.
+  }
 }

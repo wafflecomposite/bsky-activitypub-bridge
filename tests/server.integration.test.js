@@ -4,7 +4,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { RemoteActorCache } from "../src/ap/remote-actor-cache.js";
 import { verifyInboxRequestSignature } from "../src/federation/inbox-signature-verifier.js";
 import { createSignedPostHeaders } from "../src/federation/http-signature.js";
-import { dispatchBridgeRequest } from "../src/server.js";
+import { dispatchBridgeRequest, shouldReadRequestBody } from "../src/server.js";
 import { InMemoryKeyManager } from "../src/crypto/key-manager.js";
 import { InMemoryDeliveryQueue } from "../src/ingest/jetstream-processor.js";
 import { InMemoryBridgeStore } from "../src/storage/in-memory-store.js";
@@ -47,6 +47,7 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   assert.equal(actorRes.body.bot, true);
   assert.equal(typeof actorRes.body.summary, "string");
   assert.equal(actorRes.body.summary.includes("Bridged by https://bridge.example"), true);
+  assert.equal(actorRes.body.following, "https://bridge.example/ap/actor/did%3Aplc%3Aalice/following");
   assert.equal(actorRes.body.featured, "https://bridge.example/ap/actor/did%3Aplc%3Aalice/featured");
 
   const outboxRes = await dispatchBridgeRequest({
@@ -60,6 +61,17 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   assert.equal(outboxRes.status, 200);
   assert.equal(outboxRes.body.type, "OrderedCollection");
   assert.equal(outboxRes.body.totalItems, 0);
+
+  const followingRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/following",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl
+  });
+  assert.equal(followingRes.status, 200);
+  assert.equal(followingRes.body.totalItems, 0);
 
   const followRes = await dispatchBridgeRequest({
     method: "POST",
@@ -175,7 +187,7 @@ test("dispatchBridgeRequest serves object and outbox from cached activities", as
 
   assert.equal(outboxRes.status, 200);
   assert.equal(outboxRes.body.type, "OrderedCollection");
-  assert.equal(outboxRes.body.totalItems, 1);
+  assert.equal(outboxRes.body.totalItems, 2);
   assert.equal(outboxRes.body.orderedItems[0].id, "https://bridge.example/ap/object/did%3Aplc%3Aalice/reply1/activity/create");
 
   store.upsertObjectActivity({
@@ -361,7 +373,8 @@ test("dispatchBridgeRequest resolves actor discovery query and materializes acto
   assert.equal(response.status, 200);
   assert.equal(response.contentType, "text/html");
   assert.equal(response.body.includes("autoalice.bsky.social@bridge.example"), true);
-  assert.equal(response.body.includes("https://bridge.example/ap/actor/did%3Aplc%3Aautoalice123"), true);
+  assert.equal(response.body.includes("Copy"), true);
+  assert.equal(response.body.includes("ap/actor/did%3Aplc%3Aautoalice123"), false);
   assert.equal(requestedUrls.some((url) => url.includes("/com.atproto.identity.resolveHandle")), true);
   assert.equal(requestedUrls.some((url) => url.includes("/app.bsky.actor.getProfile")), true);
 });
@@ -422,7 +435,7 @@ test("dispatchBridgeRequest resolves post discovery query and materializes objec
 
   assert.equal(response.status, 200);
   assert.equal(response.contentType, "text/html");
-  assert.equal(response.body.includes("https://bridge.example/ap/object/did%3Aplc%3Aautoalice123/late1"), true);
+  assert.equal(response.body.includes("autoalice.bsky.social@bridge.example"), true);
   const cached = store.getObjectByRkey("did:plc:autoalice123", "late1");
   assert.equal(cached?.object?.content, "late fetched via frontpage");
 });
@@ -815,4 +828,16 @@ test("dispatchBridgeRequest rejects inbox request when signature verification fa
 
   assert.equal(result.status, 401);
   assert.equal(result.body.error, "bad-signature");
+});
+
+test("shouldReadRequestBody skips non-body methods", () => {
+  assert.equal(shouldReadRequestBody({ method: "GET" }), false);
+  assert.equal(shouldReadRequestBody({ method: "HEAD" }), false);
+  assert.equal(shouldReadRequestBody({ method: "OPTIONS" }), false);
+});
+
+test("shouldReadRequestBody keeps reading POST-like methods", () => {
+  assert.equal(shouldReadRequestBody({ method: "POST" }), true);
+  assert.equal(shouldReadRequestBody({ method: "PUT" }), true);
+  assert.equal(shouldReadRequestBody({ method: "PATCH" }), true);
 });

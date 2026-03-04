@@ -5,6 +5,8 @@ export class JetstreamClient {
   #jetstreamUrl;
   #wantedCollections;
   #wantedDids;
+  #wantedDidSet;
+  #requireWantedDids;
   #reconnectDelayMs;
   #rewindSeconds;
   #WebSocketImpl;
@@ -13,7 +15,19 @@ export class JetstreamClient {
   #ws = null;
   #reconnectTimer = null;
 
-  constructor({ processor, state, shardId = "default", jetstreamUrl, wantedCollections = ["app.bsky.feed.post"], wantedDids = [], reconnectDelayMs = 1000, rewindSeconds = 5, WebSocketImpl = WebSocket, timers = globalThis }) {
+  constructor({
+    processor,
+    state,
+    shardId = "default",
+    jetstreamUrl,
+    wantedCollections = ["app.bsky.feed.post"],
+    wantedDids = [],
+    requireWantedDids = true,
+    reconnectDelayMs = 1000,
+    rewindSeconds = 5,
+    WebSocketImpl = WebSocket,
+    timers = globalThis
+  }) {
     if (!processor || typeof processor.process !== "function") {
       throw new Error("JetstreamClient requires a processor with a process(event) method");
     }
@@ -31,7 +45,9 @@ export class JetstreamClient {
     this.#shardId = shardId;
     this.#jetstreamUrl = jetstreamUrl ?? "wss://jetstream1.us-east.bsky.network/subscribe";
     this.#wantedCollections = [...wantedCollections];
-    this.#wantedDids = [...wantedDids];
+    this.#wantedDids = normalizeWantedDids(wantedDids);
+    this.#wantedDidSet = new Set(this.#wantedDids);
+    this.#requireWantedDids = requireWantedDids;
     this.#reconnectDelayMs = reconnectDelayMs;
     this.#rewindSeconds = rewindSeconds;
     this.#WebSocketImpl = WebSocketImpl;
@@ -44,7 +60,9 @@ export class JetstreamClient {
     }
 
     this.#running = true;
-    this.#connect();
+    if (this.#canConnect()) {
+      this.#connect();
+    }
   }
 
   stop() {
@@ -62,9 +80,28 @@ export class JetstreamClient {
   }
 
   setWantedDids(nextWantedDids) {
-    this.#wantedDids = [...nextWantedDids];
+    this.#wantedDids = normalizeWantedDids(nextWantedDids);
+    this.#wantedDidSet = new Set(this.#wantedDids);
+
+    if (!this.#running) {
+      return;
+    }
+
+    if (!this.#canConnect()) {
+      if (this.#reconnectTimer) {
+        this.#timers.clearTimeout(this.#reconnectTimer);
+        this.#reconnectTimer = null;
+      }
+
+      if (this.#ws) {
+        this.#ws.close();
+        this.#ws = null;
+      }
+      return;
+    }
 
     if (!this.#ws || this.#ws.readyState !== this.#WebSocketImpl.OPEN) {
+      this.#connect();
       return;
     }
 
@@ -80,8 +117,16 @@ export class JetstreamClient {
     return this.#ws?.url ?? null;
   }
 
+  getWantedDidCount() {
+    return this.#wantedDids.length;
+  }
+
   #connect() {
-    if (!this.#running) {
+    if (!this.#running || !this.#canConnect()) {
+      return;
+    }
+
+    if (this.#ws && this.#ws.readyState === this.#WebSocketImpl.OPEN) {
       return;
     }
 
@@ -122,11 +167,23 @@ export class JetstreamClient {
       return;
     }
 
+    if (this.#requireWantedDids && this.#wantedDidSet.size === 0) {
+      return;
+    }
+
+    if (typeof parsed?.did === "string" && this.#wantedDidSet.size > 0 && !this.#wantedDidSet.has(parsed.did)) {
+      return;
+    }
+
     this.#processor.process(parsed);
   }
 
   #handleDisconnect() {
     if (!this.#running) {
+      return;
+    }
+
+    if (!this.#canConnect()) {
       return;
     }
 
@@ -138,6 +195,10 @@ export class JetstreamClient {
       this.#reconnectTimer = null;
       this.#connect();
     }, this.#reconnectDelayMs);
+  }
+
+  #canConnect() {
+    return !this.#requireWantedDids || this.#wantedDids.length > 0;
   }
 }
 
@@ -159,4 +220,15 @@ export function buildJetstreamSubscribeUrl({ jetstreamUrl, cursor, rewindSeconds
   }
 
   return url.toString();
+}
+
+function normalizeWantedDids(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return [...new Set(values
+    .filter((did) => typeof did === "string" && did.trim())
+    .map((did) => did.trim()))]
+    .sort();
 }

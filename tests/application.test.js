@@ -43,3 +43,25 @@ test("createBridgeApplication exposes metrics snapshot before runtime starts", (
   assert.equal(metrics.delivery.delivered, 0);
   assert.equal(metrics.jetstream.running, false);
 });
+
+test("createBridgeApplication flushes async file stores on stop", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bridge-app-"));
+
+  try {
+    const app = createBridgeApplication({
+      dataDir: dir
+    });
+
+    app.store.upsertActor({
+      did: "did:plc:alice",
+      handle: "alice.bsky.social"
+    });
+
+    await app.stop();
+
+    const reloaded = new FileBridgeStore({ filePath: join(dir, "store.json") });
+    assert.equal(reloaded.getActorByDid("did:plc:alice")?.handle, "alice.bsky.social");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

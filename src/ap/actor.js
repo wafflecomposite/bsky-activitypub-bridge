@@ -1,6 +1,7 @@
 import {
   actorFeaturedId,
   actorFollowersId,
+  actorFollowingId,
   actorId,
   actorInboxId,
   actorOutboxId
@@ -27,6 +28,7 @@ export function buildActorDocument({ baseUrl, profile, publicKeyPem }) {
     inbox: actorInboxId(baseUrl, profile.did),
     outbox: actorOutboxId(baseUrl, profile.did),
     followers: actorFollowersId(baseUrl, profile.did),
+    following: actorFollowingId(baseUrl, profile.did),
     featured: actorFeaturedId(baseUrl, profile.did),
     icon: profile.avatarUrl
       ? {

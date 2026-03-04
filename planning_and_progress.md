@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Promote live-network validation from manual checks to repeatable automated E2E, then prepare CI-compatible hardening.
+Stabilize production-like behavior: strict ingest scoping, reliable follow acceptance/delivery, accurate AP-facing stats/metadata, and minimal end-user discovery UX.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -138,6 +138,24 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - repost create/delete mapping to ActivityPub `Announce`/`Delete`
   - quote post links and mention facets resolve to bridged ActivityPub object/actor URLs where resolvable
   - actor freshness semantics hardened via `profileFetchedAt` to avoid seed records suppressing first profile hydration
+- Implemented ingest-scope safety guardrails:
+  - Jetstream client now requires non-empty wanted DID set by default and stays idle otherwise
+  - runtime wiring includes explicit unsafe override (`UNSAFE_ALLOW_UNFILTERED_JETSTREAM`) for intentional unfiltered mode only
+  - inbound Jetstream events are DID-filtered client-side before processor/storage writes
+  - runtime metrics now include active wanted DID count
+- Implemented non-blocking file persistence mode for runtime durability:
+  - file-backed store/state/queue support async debounced persistence with explicit `flush()`
+  - app shutdown now flushes async persistent components before stop
+  - data-dir application wiring defaults file-backed components to async persistence mode
+- Fixed AP collection surface for profile counters:
+  - added actor `following` property + `/ap/actor/{did}/following` endpoint
+  - outbox `totalItems` now reports total cached activities independent of pagination `limit`
+  - added in-memory/file store outbox count helpers
+- Simplified resolver frontpage UX:
+  - UI now returns only searchable fediverse account address with one-click copy button
+  - machine-readable JSON resolver endpoint remains available for automation
+- Fixed server request-body handling for proxy compatibility:
+  - GET/HEAD/OPTIONS requests no longer block on raw body reads before dispatch
 
 ## Verification Status
 - Test commands:
@@ -150,19 +168,40 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - live E2E CI harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including profile fidelity, replies/thread linkage, media propagation, repost propagation, and bridge read-surface checks
 
 ## Next Milestone
-Federation compatibility and production hardening:
-- Add inbound RFC9421 message signature verification path alongside current cavage verifier.
-- Plan migration path from JSON-file durability to SQLite/Postgres.
+Reliability and interoperability hardening:
+- Prevent accidental firehose ingest/storage in persistent mode.
+- Restore robust follow completion on GtS/Mastodon.
+- Fix AP profile counters/pinned-post surfacing and validate via tests/live checks.
 
 ## TODO
-- Discovery UX hardening:
-  - expand resolver parsing for additional fediverse profile URL shapes beyond `/profile/...` and bridge-native AP URLs.
-- Federation compatibility hardening:
+- Priority P0: ingest scope + persistence safety (critical)
+  - Add startup warning/error path when ingest is idle due missing wanted DID filters.
+  - Add regression test that persisted store does not grow with unrelated DIDs when wanted DID set is empty.
+- Priority P0: follow reliability across GtS/Mastodon
+  - Investigate and fix follow-request stalls (`requested` never transitions to `following`) in real-world runs.
+  - Validate inbound signature compatibility modes and defaults for follow ingestion.
+  - Add/extend live checks to assert full follow lifecycle completion and post delivery for both test instances.
+- Priority P0: AP actor stats/profile fidelity fixes
+  - Fix counters exposed to AP consumers:
+    - follower count (`followers.totalItems`) validation across live/manual scenarios
+    - following count (explicit `following` collection semantics for one-way bridge)
+    - posts/statuses count (outbox total independent from pagination limit)
+  - Verify/fix pinned-post surfacing through actor `featured` collection, including cache-miss retrieval.
+  - Add unit/integration coverage for counters and pinned-post behavior.
+- Priority P0: resolver UX simplification
+  - Keep frontpage output constrained to account+copy contract while preserving accessibility/compatibility across mobile/desktop.
+  - Keep machine-readable `GET /api/resolve` for automation.
+- Priority P1: discovery parser hardening
+  - Expand resolver parsing for additional fediverse profile URL shapes beyond `/profile/...` and bridge-native AP URLs.
+- Priority P1: federation compatibility hardening
   - Add inbound RFC9421 message-signature verification path alongside the current cavage verifier.
-- Production durability/ops:
+- Priority P1: production durability/ops
   - Move from JSON files to SQLite/Postgres.
   - Add explicit operational alerting for sustained delivery failures / backlog growth.
 
 ## Notes
 - Durability is currently JSON-file-backed for zero-dependency local/dev reliability.
 - For higher-scale production usage, move persistence from JSON files to SQLite/Postgres.
+- Latest manual-run diagnosis:
+  - persistent `store.json` captured records for thousands of DIDs, indicating Jetstream ingest was running without effective DID scoping.
+  - this is now tracked as Priority P0 and must be blocked by default behavior + tests.

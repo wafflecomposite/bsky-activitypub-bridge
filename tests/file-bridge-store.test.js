@@ -62,6 +62,7 @@ test("FileBridgeStore persists object cache and outbox activity list", () => {
     assert.equal(object.deleted, false);
     assert.equal(object.object.type, "Note");
     assert.equal(store2.listOutboxActivities("did:plc:alice").length, 1);
+    assert.equal(store2.countOutboxActivities("did:plc:alice"), 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -90,6 +91,32 @@ test("FileBridgeStore preserves profile fields on partial actor upsert", () => {
     assert.equal(actor.displayName, "Alice");
     assert.equal(actor.avatarUrl, "https://cdn.bsky.app/avatar/alice.jpg");
     assert.equal(actor.profileFetchedAt, "2026-03-04T00:00:00.000Z");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("FileBridgeStore async persist mode writes on flush", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bridge-store-"));
+  const filePath = join(dir, "store.json");
+
+  try {
+    const store = new FileBridgeStore({
+      filePath,
+      persistMode: "async",
+      persistDebounceMs: 250
+    });
+    store.upsertActor({
+      did: "did:plc:alice",
+      handle: "alice.bsky.social"
+    });
+
+    const beforeFlush = new FileBridgeStore({ filePath });
+    assert.equal(beforeFlush.getActorByDid("did:plc:alice"), null);
+
+    await store.flush();
+    const afterFlush = new FileBridgeStore({ filePath });
+    assert.equal(afterFlush.getActorByDid("did:plc:alice")?.handle, "alice.bsky.social");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

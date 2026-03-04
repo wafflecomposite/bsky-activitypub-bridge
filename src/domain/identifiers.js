@@ -67,6 +67,10 @@ export function actorFollowersId(baseUrl, did) {
   return `${actorId(baseUrl, did)}/followers`;
 }
 
+export function actorFollowingId(baseUrl, did) {
+  return `${actorId(baseUrl, did)}/following`;
+}
+
 export function actorFeaturedId(baseUrl, did) {
   return `${actorId(baseUrl, did)}/featured`;
 }

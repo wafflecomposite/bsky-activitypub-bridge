@@ -1,20 +1,29 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFile as writeFileAsync, mkdir as mkdirAsync } from "node:fs/promises";
 import { dirname } from "node:path";
 import { assertDid, assertHandle } from "../domain/identifiers.js";
 
 export class FileBridgeStore {
   #filePath;
+  #persistMode;
+  #persistDebounceMs;
   #actorsByDid = new Map();
   #didByHandle = new Map();
   #followersByDid = new Map();
   #recordsByDid = new Map();
+  #persistTimer = null;
+  #persistDirty = false;
+  #persistWriteQueued = false;
+  #persistWritePromise = null;
 
-  constructor({ filePath }) {
+  constructor({ filePath, persistMode = "sync", persistDebounceMs = 50 }) {
     if (!filePath) {
       throw new Error("FileBridgeStore requires filePath");
     }
 
     this.#filePath = filePath;
+    this.#persistMode = persistMode === "async" ? "async" : "sync";
+    this.#persistDebounceMs = normalizePersistDebounceMs(persistDebounceMs);
     this.#load();
   }
 
@@ -164,6 +173,48 @@ export class FileBridgeStore {
       .map((entry) => entry.activity);
   }
 
+  countOutboxActivities(did) {
+    const actorDid = assertDid(did);
+    const records = this.#recordsByDid.get(actorDid);
+    if (!records) {
+      return 0;
+    }
+
+    let total = 0;
+    for (const entry of records.values()) {
+      if (entry.activity && typeof entry.activity === "object") {
+        total += 1;
+      }
+    }
+    return total;
+  }
+
+  async flush() {
+    if (this.#persistMode === "sync") {
+      return;
+    }
+
+    if (this.#persistTimer) {
+      clearTimeout(this.#persistTimer);
+      this.#persistTimer = null;
+    }
+
+    this.#triggerAsyncPersist();
+
+    while (this.#persistWritePromise || this.#persistDirty || this.#persistTimer) {
+      if (this.#persistWritePromise) {
+        await this.#persistWritePromise;
+        continue;
+      }
+
+      if (this.#persistTimer) {
+        clearTimeout(this.#persistTimer);
+        this.#persistTimer = null;
+      }
+      this.#triggerAsyncPersist();
+    }
+  }
+
   #load() {
     if (!existsSync(this.#filePath)) {
       return;
@@ -220,6 +271,23 @@ export class FileBridgeStore {
   }
 
   #persist() {
+    if (this.#persistMode === "sync") {
+      this.#persistSync();
+      return;
+    }
+
+    this.#persistDirty = true;
+    if (this.#persistTimer) {
+      return;
+    }
+
+    this.#persistTimer = setTimeout(() => {
+      this.#persistTimer = null;
+      this.#triggerAsyncPersist();
+    }, this.#persistDebounceMs);
+  }
+
+  #persistSync() {
     const actors = Array.from(this.#actorsByDid.values());
     const followersByDid = {};
     const recordsByDid = {};
@@ -238,6 +306,57 @@ export class FileBridgeStore {
       followersByDid,
       recordsByDid
     }, null, 2));
+  }
+
+  #triggerAsyncPersist() {
+    if (this.#persistMode !== "async") {
+      return;
+    }
+
+    if (this.#persistWritePromise) {
+      this.#persistWriteQueued = true;
+      return;
+    }
+
+    if (!this.#persistDirty) {
+      return;
+    }
+
+    this.#persistDirty = false;
+    const snapshot = this.#buildSnapshot();
+    const payload = JSON.stringify(snapshot, null, 2);
+
+    this.#persistWritePromise = persistSnapshotAsync(this.#filePath, payload)
+      .catch(() => {
+        // Best effort durability: keep serving runtime interactions even if persistence fails.
+      })
+      .finally(() => {
+        this.#persistWritePromise = null;
+        if (this.#persistWriteQueued || this.#persistDirty) {
+          this.#persistWriteQueued = false;
+          this.#triggerAsyncPersist();
+        }
+      });
+  }
+
+  #buildSnapshot() {
+    const actors = Array.from(this.#actorsByDid.values());
+    const followersByDid = {};
+    const recordsByDid = {};
+
+    for (const [did, followers] of this.#followersByDid.entries()) {
+      followersByDid[did] = Array.from(followers.values());
+    }
+
+    for (const [did, records] of this.#recordsByDid.entries()) {
+      recordsByDid[did] = Array.from(records.values());
+    }
+
+    return {
+      actors,
+      followersByDid,
+      recordsByDid
+    };
   }
 }
 
@@ -307,6 +426,19 @@ function normalizeLimit(value) {
   }
 
   return 20;
+}
+
+function normalizePersistDebounceMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.min(Math.max(Math.trunc(value), 0), 5000);
+  }
+
+  return 50;
+}
+
+async function persistSnapshotAsync(filePath, payload) {
+  await mkdirAsync(dirname(filePath), { recursive: true });
+  await writeFileAsync(filePath, payload);
 }
 
 function normalizeOptionalIsoString(value) {

@@ -18,6 +18,7 @@ const app = createBridgeApplication({
     wantedCollections: parseList(process.env.JETSTREAM_WANTED_COLLECTIONS, ["app.bsky.feed.post", "app.bsky.feed.repost"]),
     wantedDids: parseList(process.env.JETSTREAM_WANTED_DIDS, []),
     autoFollowedDids: parseBoolean(process.env.JETSTREAM_AUTO_FOLLOWED_DIDS, true),
+    allowUnfiltered: parseBoolean(process.env.UNSAFE_ALLOW_UNFILTERED_JETSTREAM, false),
     wantedDidsRefreshMs: parseInteger(process.env.JETSTREAM_WANTED_DIDS_REFRESH_MS, 30_000),
     reconnectDelayMs: parseInteger(process.env.JETSTREAM_RECONNECT_DELAY_MS, 1000),
     rewindSeconds: parseInteger(process.env.JETSTREAM_REWIND_SECONDS, 5)

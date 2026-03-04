@@ -71,7 +71,18 @@ export class BridgeRuntime {
     return results;
   }
 
-  startJetstream({ wantedDids = [], wantedDidsProvider = null, wantedDidsRefreshMs = 0, wantedCollections = ["app.bsky.feed.post"], jetstreamUrl, reconnectDelayMs = 1000, rewindSeconds = 5, WebSocketImpl = WebSocket, timers = globalThis } = {}) {
+  startJetstream({
+    wantedDids = [],
+    wantedDidsProvider = null,
+    wantedDidsRefreshMs = 0,
+    wantedCollections = ["app.bsky.feed.post"],
+    allowUnfiltered = false,
+    jetstreamUrl,
+    reconnectDelayMs = 1000,
+    rewindSeconds = 5,
+    WebSocketImpl = WebSocket,
+    timers = globalThis
+  } = {}) {
     if (this.#jetstreamClient) {
       this.#jetstreamClient.stop();
     }
@@ -92,6 +103,7 @@ export class BridgeRuntime {
       state: this.state,
       shardId: this.shardId,
       wantedDids: initialWantedDids,
+      requireWantedDids: !allowUnfiltered,
       wantedCollections,
       jetstreamUrl,
       reconnectDelayMs,
@@ -147,7 +159,8 @@ export class BridgeRuntime {
         lastResult: this.#metrics.lastResult
       },
       jetstream: {
-        running: this.#jetstreamClient !== null
+        running: this.#jetstreamClient !== null,
+        wantedDidCount: this.#jetstreamClient?.getWantedDidCount?.() ?? 0
       }
     };
   }

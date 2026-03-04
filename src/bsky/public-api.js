@@ -84,9 +84,18 @@ export async function getPostRecord({ did, rkey, fetchImpl = fetch }) {
 }
 
 function extractPinnedPostUri(profile) {
+  if (typeof profile?.pinnedPost === "string" && profile.pinnedPost) {
+    return profile.pinnedPost;
+  }
+
   const direct = profile?.pinnedPost?.uri;
   if (typeof direct === "string" && direct) {
     return direct;
+  }
+
+  const byRecord = profile?.pinnedPost?.record?.uri;
+  if (typeof byRecord === "string" && byRecord) {
+    return byRecord;
   }
 
   const byValue = profile?.pinnedPost?.value?.uri;

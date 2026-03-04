@@ -86,3 +86,44 @@ test("BridgeRuntime refreshes Jetstream wanted DIDs from provider", () => {
 
   runtime.stopJetstream({ timers });
 });
+
+test("BridgeRuntime keeps jetstream idle when wanted DID set is empty", () => {
+  FakeWebSocket.reset();
+
+  const runtime = new BridgeRuntime({
+    baseUrl: "https://bridge.example"
+  });
+
+  const intervals = [];
+  const timers = {
+    setInterval: (fn, ms) => {
+      intervals.push({ fn, ms });
+      return Symbol("interval");
+    },
+    clearInterval: () => {},
+    setTimeout: () => Symbol("timeout"),
+    clearTimeout: () => {}
+  };
+
+  runtime.startJetstream({
+    wantedDidsProvider: () => runtime.store.listFollowedDids(),
+    wantedDidsRefreshMs: 5000,
+    WebSocketImpl: FakeWebSocket,
+    timers,
+    jetstreamUrl: "wss://jetstream.example/subscribe"
+  });
+
+  assert.equal(FakeWebSocket.instances.length, 0);
+  assert.equal(intervals.length, 1);
+
+  runtime.store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+  runtime.store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/r1",
+    inboxUrl: "https://remote.example/users/r1/inbox"
+  });
+
+  intervals[0].fn();
+  assert.equal(FakeWebSocket.instances.length, 1);
+
+  runtime.stopJetstream({ timers });
+});

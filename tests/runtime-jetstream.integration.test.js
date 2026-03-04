@@ -75,7 +75,22 @@ test("BridgeRuntime can ingest from Jetstream client and deliver", async () => {
     }
   });
 
+  FakeWebSocket.instances[0].emitMessage({
+    did: "did:plc:mallory",
+    time_us: 124,
+    commit: {
+      collection: "app.bsky.feed.post",
+      operation: "create",
+      rkey: "ignored",
+      record: {
+        text: "should be ignored",
+        createdAt: "2026-03-04T00:00:01.000Z"
+      }
+    }
+  });
+
   assert.equal(runtime.queue.size(), 1);
+  assert.equal(runtime.store.getObjectByRkey("did:plc:mallory", "ignored"), null);
 
   const delivery = await runtime.drainDeliveries({ max: 1 });
   assert.equal(delivery.length, 1);

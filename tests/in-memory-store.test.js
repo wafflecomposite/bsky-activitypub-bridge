@@ -67,6 +67,7 @@ test("InMemoryBridgeStore stores objects and exposes outbox activities", () => {
   const outbox = store.listOutboxActivities("did:plc:alice", { limit: 20 });
   assert.equal(outbox.length, 2);
   assert.equal(outbox[0].id, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post-2/activity/create");
+  assert.equal(store.countOutboxActivities("did:plc:alice"), 2);
 });
 
 test("InMemoryBridgeStore preserves profile fields on partial actor upsert", () => {

@@ -12,6 +12,7 @@ import {
   actorId,
   actorFeaturedId,
   actorFollowersId,
+  actorFollowingId,
   actorOutboxId,
   decodeDidFromPath,
   objectId,
@@ -33,7 +34,9 @@ export function createBridgeServer({
   let publicBaseUrl = baseUrl;
 
   const server = http.createServer(async (req, res) => {
-    const bodyText = await readRawBody(req);
+    const bodyText = shouldReadRequestBody(req)
+      ? await readRawBody(req)
+      : "";
 
     try {
       const response = await dispatchBridgeRequest({
@@ -164,6 +167,10 @@ export async function dispatchBridgeRequest({
   if (method === "GET" && url.pathname.startsWith("/ap/actor/")) {
     if (url.pathname.endsWith("/followers")) {
       return handleGetFollowers({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
+    }
+
+    if (url.pathname.endsWith("/following")) {
+      return handleGetFollowing({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
     }
 
     if (url.pathname.endsWith("/outbox")) {
@@ -431,6 +438,47 @@ async function handleGetFollowers({ url, store, publicBaseUrl, fetchImpl, profil
   };
 }
 
+async function handleGetFollowing({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
+  let did;
+  try {
+    const didPath = url.pathname.slice("/ap/actor/".length, -"/following".length);
+    did = decodeDidFromPath(didPath);
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: error.message }
+    };
+  }
+
+  const actor = await ensureActorProfile({
+    store,
+    fetchImpl,
+    did,
+    cacheMaxAgeMs: profileCacheMaxAgeMs
+  });
+
+  if (!actor) {
+    return {
+      status: 404,
+      contentType: "application/json",
+      body: { error: "Bridge actor not found" }
+    };
+  }
+
+  return {
+    status: 200,
+    contentType: "application/activity+json",
+    body: {
+      "@context": "https://www.w3.org/ns/activitystreams",
+      id: actorFollowingId(publicBaseUrl, did),
+      type: "OrderedCollection",
+      totalItems: 0,
+      orderedItems: []
+    }
+  };
+}
+
 async function handleGetOutbox({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
   let did;
   try {
@@ -460,6 +508,9 @@ async function handleGetOutbox({ url, store, publicBaseUrl, fetchImpl, profileCa
   }
 
   const limit = parseCollectionLimit(url.searchParams.get("limit"), 20);
+  const totalItems = typeof store.countOutboxActivities === "function"
+    ? store.countOutboxActivities(did)
+    : null;
   const items = typeof store.listOutboxActivities === "function"
     ? store.listOutboxActivities(did, { limit })
     : [];
@@ -471,7 +522,7 @@ async function handleGetOutbox({ url, store, publicBaseUrl, fetchImpl, profileCa
       "@context": "https://www.w3.org/ns/activitystreams",
       id: actorOutboxId(publicBaseUrl, did),
       type: "OrderedCollection",
-      totalItems: items.length,
+      totalItems: typeof totalItems === "number" ? totalItems : items.length,
       orderedItems: items
     }
   };
@@ -834,7 +885,6 @@ function readProfileFreshnessTimestamp(actor) {
 
 function renderDiscoveryFrontpage({ publicBaseUrl, input, result, error }) {
   const escapedInput = escapeHtml(input ?? "");
-  const escapedBaseUrl = escapeHtml(publicBaseUrl);
   const resultHtml = renderDiscoveryResult(result, error);
 
   return `<!doctype html>
@@ -853,22 +903,24 @@ function renderDiscoveryFrontpage({ publicBaseUrl, input, result, error }) {
     form { display: flex; gap: 8px; margin-bottom: 10px; }
     input[type="text"] { flex: 1; border: 1px solid #94a3b8; border-radius: 8px; font: inherit; padding: 10px 12px; }
     button { border: 1px solid #0f172a; background: #0f172a; color: #fff; border-radius: 8px; font: inherit; padding: 10px 14px; cursor: pointer; }
+    .copy-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+    .copy-btn { border-color: #334155; background: #334155; }
     code { background: #f1f5f9; padding: 2px 6px; border-radius: 6px; }
     ul { margin: 10px 0 0; padding-left: 18px; }
     li { margin: 6px 0; }
     .error { color: #b91c1c; margin-top: 10px; }
+    .hint { color: #475569; margin-top: 10px; }
   </style>
 </head>
 <body>
   <main>
     <h1>Bluesky Bridge Resolver</h1>
-    <p>Paste a Bluesky user or post and copy the bridge URL/account for Mastodon or GtS search.</p>
+    <p>Paste a Bluesky user or post and copy the account address for Mastodon/GtS search.</p>
     <div class="box">
       <form method="get" action="/">
         <input type="text" name="q" value="${escapedInput}" placeholder="mouseu.bsky.social or https://bsky.app/profile/.../post/..." autocomplete="off">
         <button type="submit">Resolve</button>
       </form>
-      <p>Bridge base: <code>${escapedBaseUrl}</code></p>
       ${resultHtml}
     </div>
   </main>
@@ -882,28 +934,15 @@ function renderDiscoveryResult(result, error) {
   }
 
   if (!result) {
-    return `<p>Supported input examples: <code>mouseu.bsky.social</code>, <code>@mouseu.bsky.social</code>, <code>https://bsky.app/profile/did:...</code>, <code>https://bsky.app/profile/<id>/post/<rkey></code>.</p>`;
+    return `<p class="hint">Supported examples: <code>mouseu.bsky.social</code>, <code>@mouseu.bsky.social</code>, <code>https://bsky.app/profile/<id>/post/<rkey></code></p>`;
   }
 
-  if (result.kind === "actor") {
-    return `<p>Actor resolved. Use either value in instance search:</p>
-<ul>
-  <li>Search acct: <code>${escapeHtml(result.acct)}</code></li>
-  <li>Actor URL: <code>${escapeHtml(result.actorUrl)}</code></li>
-  <li>WebFinger: <code>${escapeHtml(result.webfinger)}</code></li>
-</ul>`;
-  }
-
-  if (result.kind === "post") {
-    return `<p>Post resolved. Use post URL in instance search:</p>
-<ul>
-  <li>Post URL: <code>${escapeHtml(result.postUrl)}</code></li>
-  <li>Author acct: <code>${escapeHtml(result.acct)}</code></li>
-  <li>Author URL: <code>${escapeHtml(result.actorUrl)}</code></li>
-</ul>`;
-  }
-
-  return "";
+  const acct = escapeHtml(result.acct);
+  return `<p>Search this account address in your fediverse server:</p>
+<div class="copy-row">
+  <code id="resolved-acct">${acct}</code>
+  <button class="copy-btn" type="button" onclick="navigator.clipboard?.writeText('${acct}')">Copy</button>
+</div>`;
 }
 
 async function handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier }) {
@@ -1044,6 +1083,15 @@ async function readRawBody(req) {
   }
 
   return Buffer.concat(chunks).toString("utf-8");
+}
+
+export function shouldReadRequestBody(req) {
+  const method = String(req?.method ?? "").toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
+    return false;
+  }
+
+  return true;
 }
 
 function sendJsonResponse(res, response) {

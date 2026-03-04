@@ -23,3 +23,27 @@ test("FileDeliveryQueue persists enqueued items across instances", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("FileDeliveryQueue async persist mode writes on flush", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bridge-queue-"));
+  const filePath = join(dir, "queue.json");
+
+  try {
+    const q1 = new FileDeliveryQueue({
+      filePath,
+      persistMode: "async",
+      persistDebounceMs: 250
+    });
+    q1.enqueue({ id: 1 });
+    assert.equal(q1.size(), 1);
+
+    const beforeFlush = new FileDeliveryQueue({ filePath });
+    assert.equal(beforeFlush.size(), 0);
+
+    await q1.flush();
+    const afterFlush = new FileDeliveryQueue({ filePath });
+    assert.equal(afterFlush.size(), 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

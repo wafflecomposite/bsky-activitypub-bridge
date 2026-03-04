@@ -58,6 +58,27 @@ test("getProfile returns normalized actor profile and pinned post uri", async ()
   });
 });
 
+test("getProfile extracts pinned post uri from alternate profile shapes", async () => {
+  const profile = await getProfile({
+    actor: "did:plc:alice123",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        did: "did:plc:alice123",
+        handle: "alice.bsky.social",
+        pinnedPost: {
+          record: {
+            uri: "at://did:plc:alice123/app.bsky.feed.post/pin2"
+          }
+        }
+      })
+    })
+  });
+
+  assert.equal(profile.pinnedPostUri, "at://did:plc:alice123/app.bsky.feed.post/pin2");
+});
+
 test("getPostRecord returns post record payload", async () => {
   const record = await getPostRecord({
     did: "did:plc:alice123",

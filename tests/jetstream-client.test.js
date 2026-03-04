@@ -84,6 +84,7 @@ test("JetstreamClient processes messages and can update wanted DIDs", () => {
 
   const ws = FakeWebSocket.instances[0];
   ws.emitMessage({ did: "did:plc:alice", commit: { collection: "app.bsky.feed.post", operation: "create", rkey: "x" } });
+  ws.emitMessage({ did: "did:plc:mallory", commit: { collection: "app.bsky.feed.post", operation: "create", rkey: "y" } });
 
   assert.equal(processed.length, 1);
 
@@ -112,6 +113,7 @@ test("JetstreamClient reconnects after close", () => {
     processor: { process: () => {} },
     state: { getCursor: () => 2_000_000 },
     jetstreamUrl: "wss://jetstream.example/subscribe",
+    wantedDids: ["did:plc:alice"],
     reconnectDelayMs: 250,
     rewindSeconds: 1,
     WebSocketImpl: FakeWebSocket,
@@ -130,6 +132,60 @@ test("JetstreamClient reconnects after close", () => {
 
   const second = new URL(FakeWebSocket.instances[1].url);
   assert.equal(second.searchParams.get("cursor"), "1000000");
+
+  client.stop();
+});
+
+test("JetstreamClient does not connect until wanted DIDs are set by default", () => {
+  FakeWebSocket.reset();
+
+  const processed = [];
+  const client = new JetstreamClient({
+    processor: { process: (event) => processed.push(event) },
+    state: { getCursor: () => null },
+    jetstreamUrl: "wss://jetstream.example/subscribe",
+    wantedCollections: ["app.bsky.feed.post"],
+    wantedDids: [],
+    WebSocketImpl: FakeWebSocket
+  });
+
+  client.start();
+  assert.equal(FakeWebSocket.instances.length, 0);
+
+  client.setWantedDids(["did:plc:alice"]);
+  assert.equal(FakeWebSocket.instances.length, 1);
+
+  const ws = FakeWebSocket.instances[0];
+  ws.emitMessage({ did: "did:plc:alice", commit: { collection: "app.bsky.feed.post", operation: "create", rkey: "x" } });
+  assert.equal(processed.length, 1);
+
+  client.setWantedDids([]);
+  assert.equal(ws.readyState, FakeWebSocket.CLOSED);
+  client.stop();
+});
+
+test("JetstreamClient can connect unfiltered when explicitly allowed", () => {
+  FakeWebSocket.reset();
+
+  const processed = [];
+  const client = new JetstreamClient({
+    processor: { process: (event) => processed.push(event) },
+    state: { getCursor: () => null },
+    jetstreamUrl: "wss://jetstream.example/subscribe",
+    wantedCollections: ["app.bsky.feed.post"],
+    wantedDids: [],
+    requireWantedDids: false,
+    WebSocketImpl: FakeWebSocket
+  });
+
+  client.start();
+  assert.equal(FakeWebSocket.instances.length, 1);
+
+  FakeWebSocket.instances[0].emitMessage({
+    did: "did:plc:anyone",
+    commit: { collection: "app.bsky.feed.post", operation: "create", rkey: "x" }
+  });
+  assert.equal(processed.length, 1);
 
   client.stop();
 });

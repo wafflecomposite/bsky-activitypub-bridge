@@ -48,7 +48,8 @@ The harness:
 2. Boots bridge in discovery mode (Jetstream off) and waits for actor readiness.
 3. Discovers remote account from GtS search and follows it.
 4. Restarts bridge in ingest mode (Jetstream on, wanted DID pinned).
-5. Publishes a real Bluesky post and waits for it on GtS home timeline.
+5. Publishes a real Bluesky self-thread (`root` + `reply`) and waits for both posts on GtS home timeline.
+6. Verifies the received reply is linked to the received root (`in_reply_to_id`/`in_reply_to_uri`).
 
 ## Manual Bring-Up (Debug Path)
 

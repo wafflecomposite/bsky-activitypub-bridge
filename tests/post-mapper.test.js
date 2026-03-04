@@ -126,6 +126,29 @@ test("mapBskyPostToActivityPub maps reply and labels", () => {
   assert.equal(result.note.summary, "Content warning: nsfw");
 });
 
+test("mapBskyPostToActivityPub maps self-thread replies to bridged object ids", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post6",
+    record: {
+      text: "thread reply",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      reply: {
+        parent: {
+          uri: "at://did:plc:alice/app.bsky.feed.post/post5"
+        },
+        root: {
+          uri: "at://did:plc:alice/app.bsky.feed.post/post1"
+        }
+      }
+    }
+  });
+
+  assert.equal(result.note.inReplyTo, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post5");
+  assert.equal(result.note.context, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post1");
+});
+
 test("mapBskyPostToActivityPub supports explicit public visibility", () => {
   const result = mapBskyPostToActivityPub({
     baseUrl,

@@ -107,30 +107,31 @@ export async function runLiveE2EHarness({
     app.store.upsertActor({ did, handle: resolvedCredentials.blueskyIdentifier });
     await app.start({ host: "127.0.0.1", port });
 
-    const posted = await createBlueskyPost({
+    const postedThread = await createBlueskyThread({
       identifier: resolvedCredentials.blueskyIdentifier,
       appPassword: resolvedCredentials.blueskyAppPassword,
       textPrefix: "Bridge automated live e2e"
     });
 
-    const timelineMatch = await waitForTimelinePost({
+    const timelineThread = await waitForTimelineThread({
       instanceUrl: resolvedCredentials.gtsInstanceUrl,
       accessToken: resolvedCredentials.gtsAccessToken,
-      marker: posted.marker,
+      rootMarker: postedThread.root.marker,
+      replyMarker: postedThread.reply.marker,
       timeoutMs: 180_000,
       log
     });
 
     const summary = {
-      ok: followState.following === true && timelineMatch.found === true,
+      ok: followState.following === true && timelineThread.threadLinked === true,
       tunnelUrl,
       dataDir: tempDir,
       remoteAcct,
       did,
       discovered,
       followState,
-      posted,
-      timelineMatch
+      postedThread,
+      timelineThread
     };
 
     return summary;
@@ -359,10 +360,7 @@ async function followAndWait({ instanceUrl, accessToken, accountId, timeoutMs, l
   throw new Error("Follow did not reach following=true before timeout");
 }
 
-async function createBlueskyPost({ identifier, appPassword, textPrefix }) {
-  const marker = `${textPrefix} ${new Date().toISOString()}`;
-  const nowIso = new Date().toISOString();
-
+async function createBlueskySession({ identifier, appPassword }) {
   const sessionResponse = await fetch("https://bsky.social/xrpc/com.atproto.server.createSession", {
     method: "POST",
     headers: {
@@ -378,8 +376,11 @@ async function createBlueskyPost({ identifier, appPassword, textPrefix }) {
     throw new Error(`Bluesky session failed: ${sessionResponse.status}`);
   }
 
-  const session = await sessionResponse.json();
+  return sessionResponse.json();
+}
 
+async function createBlueskyPostRecord({ session, text, reply = null }) {
+  const nowIso = new Date().toISOString();
   const createResponse = await fetch("https://bsky.social/xrpc/com.atproto.repo.createRecord", {
     method: "POST",
     headers: {
@@ -391,8 +392,9 @@ async function createBlueskyPost({ identifier, appPassword, textPrefix }) {
       collection: "app.bsky.feed.post",
       record: {
         $type: "app.bsky.feed.post",
-        text: marker,
-        createdAt: nowIso
+        text,
+        createdAt: nowIso,
+        ...(reply ? { reply } : {})
       }
     })
   });
@@ -401,35 +403,83 @@ async function createBlueskyPost({ identifier, appPassword, textPrefix }) {
     throw new Error(`Bluesky post failed: ${createResponse.status}`);
   }
 
-  const created = await createResponse.json();
+  return createResponse.json();
+}
+
+async function createBlueskyThread({ identifier, appPassword, textPrefix }) {
+  const nonce = new Date().toISOString();
+  const rootMarker = `${textPrefix} root ${nonce}`;
+  const replyMarker = `${textPrefix} reply ${nonce}`;
+  const session = await createBlueskySession({ identifier, appPassword });
+
+  const rootCreated = await createBlueskyPostRecord({
+    session,
+    text: rootMarker
+  });
+
+  const replyCreated = await createBlueskyPostRecord({
+    session,
+    text: replyMarker,
+    reply: {
+      root: {
+        uri: rootCreated.uri,
+        cid: rootCreated.cid
+      },
+      parent: {
+        uri: rootCreated.uri,
+        cid: rootCreated.cid
+      }
+    }
+  });
 
   return {
-    marker,
-    uri: created.uri,
-    cid: created.cid
+    root: {
+      marker: rootMarker,
+      uri: rootCreated.uri,
+      cid: rootCreated.cid
+    },
+    reply: {
+      marker: replyMarker,
+      uri: replyCreated.uri,
+      cid: replyCreated.cid
+    }
   };
 }
 
-async function waitForTimelinePost({ instanceUrl, accessToken, marker, timeoutMs, log }) {
+async function waitForTimelineThread({ instanceUrl, accessToken, rootMarker, replyMarker, timeoutMs, log }) {
   const startedAt = Date.now();
+  let lastEvaluation = {
+    rootFound: false,
+    replyFound: false,
+    threadLinked: false,
+    rootStatusId: null,
+    replyStatusId: null
+  };
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
       const statuses = await gtsApi({
         instanceUrl,
         accessToken,
-        path: "/api/v1/timelines/home?limit=40",
+        path: "/api/v1/timelines/home?limit=80",
         timeoutMs: 30_000
       });
 
-      const found = Array.isArray(statuses) && statuses.some((status) => {
-        const content = typeof status?.content === "string" ? status.content : "";
-        const text = typeof status?.text === "string" ? status.text : "";
-        return content.includes(marker) || text.includes(marker);
+      lastEvaluation = evaluateTimelineThread({
+        statuses,
+        rootMarker,
+        replyMarker
       });
 
-      if (found) {
-        return { found: true };
+      if (lastEvaluation.threadLinked) {
+        return {
+          found: true,
+          ...lastEvaluation
+        };
+      }
+
+      if (lastEvaluation.rootFound || lastEvaluation.replyFound) {
+        log(`timeline progress rootFound=${lastEvaluation.rootFound} replyFound=${lastEvaluation.replyFound} linked=${lastEvaluation.threadLinked}`);
       }
     } catch (error) {
       log(`timeline retry error=${error instanceof Error ? error.message : String(error)}`);
@@ -438,7 +488,37 @@ async function waitForTimelinePost({ instanceUrl, accessToken, marker, timeoutMs
     await sleep(3_000);
   }
 
-  return { found: false };
+  return {
+    found: false,
+    ...lastEvaluation
+  };
+}
+
+export function evaluateTimelineThread({ statuses, rootMarker, replyMarker }) {
+  const list = Array.isArray(statuses) ? statuses : [];
+  const rootStatus = list.find((status) => statusContainsMarker(status, rootMarker)) ?? null;
+  const replyStatus = list.find((status) => statusContainsMarker(status, replyMarker)) ?? null;
+
+  const linkedById = rootStatus?.id && replyStatus?.in_reply_to_id
+    ? String(replyStatus.in_reply_to_id) === String(rootStatus.id)
+    : false;
+  const linkedByUri = rootStatus?.uri && replyStatus?.in_reply_to_uri
+    ? String(replyStatus.in_reply_to_uri) === String(rootStatus.uri)
+    : false;
+
+  return {
+    rootFound: rootStatus !== null,
+    replyFound: replyStatus !== null,
+    threadLinked: Boolean(linkedById || linkedByUri),
+    rootStatusId: rootStatus?.id ?? null,
+    replyStatusId: replyStatus?.id ?? null
+  };
+}
+
+function statusContainsMarker(status, marker) {
+  const content = typeof status?.content === "string" ? status.content : "";
+  const text = typeof status?.text === "string" ? status.text : "";
+  return content.includes(marker) || text.includes(marker);
 }
 
 async function gtsApi({ instanceUrl, accessToken, path, method = "GET", timeoutMs = 30_000, body = null }) {

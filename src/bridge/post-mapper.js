@@ -33,7 +33,28 @@ export function mapBskyPostToActivityPub({ baseUrl, did, rkey, record, visibilit
 
   const replyUri = record.reply?.parent?.uri;
   if (typeof replyUri === "string") {
-    note.inReplyTo = atUriToBskyWebUrl(replyUri);
+    const inReplyTo = mapReplyUriToActivityPubReference({
+      uri: replyUri,
+      baseUrl,
+      currentDid: did
+    });
+
+    if (inReplyTo) {
+      note.inReplyTo = inReplyTo;
+    }
+  }
+
+  const rootUri = record.reply?.root?.uri;
+  if (typeof rootUri === "string") {
+    const rootContext = mapReplyUriToActivityPubReference({
+      uri: rootUri,
+      baseUrl,
+      currentDid: did
+    });
+
+    if (rootContext) {
+      note.context = rootContext;
+    }
   }
 
   const labelValues = extractLabelValues(record.labels);
@@ -226,12 +247,42 @@ function sliceByBytes(text, boundaryMap, byteStart, byteEnd) {
 }
 
 function atUriToBskyWebUrl(uri) {
-  const match = /^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/?#]+)$/.exec(uri);
-  if (!match) {
-    return uri;
+  const parsed = parseAtPostUri(uri);
+  if (!parsed) {
+    return null;
   }
 
-  return `https://bsky.app/profile/${match[1]}/post/${match[2]}`;
+  return `https://bsky.app/profile/${parsed.did}/post/${parsed.rkey}`;
+}
+
+function mapReplyUriToActivityPubReference({ uri, baseUrl, currentDid }) {
+  const parsed = parseAtPostUri(uri);
+  if (parsed && parsed.did === currentDid) {
+    return objectId(baseUrl, parsed.did, parsed.rkey);
+  }
+
+  const fallback = atUriToBskyWebUrl(uri);
+  if (fallback) {
+    return fallback;
+  }
+
+  return uri;
+}
+
+function parseAtPostUri(uri) {
+  if (typeof uri !== "string") {
+    return null;
+  }
+
+  const match = /^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/?#]+)$/.exec(uri);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    did: match[1],
+    rkey: match[2]
+  };
 }
 
 function extractLabelValues(labels) {

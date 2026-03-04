@@ -5,7 +5,7 @@ import { processInboxActivity } from "./ap/follow.js";
 import { resolveFollowerEndpoints } from "./ap/remote-actor.js";
 import { resolveWebFingerResource } from "./ap/webfinger.js";
 import { InMemoryKeyManager } from "./crypto/key-manager.js";
-import { actorFollowersId, actorOutboxId, decodeDidFromPath } from "./domain/identifiers.js";
+import { actorFollowersId, actorOutboxId, assertDid, decodeDidFromPath, parseAcctResource } from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
 
 export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null, actorCache = null, inboxSignatureVerifier = null } = {}) {
@@ -103,7 +103,7 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
   const url = new URL(rawUrl, `http://${host}`);
 
   if (method === "GET" && url.pathname === "/.well-known/webfinger") {
-    return handleWebFinger({ url, store, publicBaseUrl: baseUrl });
+    return handleWebFinger({ url, store, publicBaseUrl: baseUrl, fetchImpl });
   }
 
   if (method === "GET" && url.pathname.startsWith("/ap/actor/")) {
@@ -129,7 +129,7 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
   };
 }
 
-function handleWebFinger({ url, store, publicBaseUrl }) {
+async function handleWebFinger({ url, store, publicBaseUrl, fetchImpl }) {
   const resource = url.searchParams.get("resource");
   if (!resource) {
     return {
@@ -140,6 +140,34 @@ function handleWebFinger({ url, store, publicBaseUrl }) {
   }
 
   const bridgeHost = new URL(publicBaseUrl).host;
+  let parsed;
+  try {
+    parsed = parseAcctResource(resource, bridgeHost);
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: error.message }
+    };
+  }
+
+  if (!store.resolveDidByHandle(parsed.handle)) {
+    const resolvedDid = await resolveDidByHandle({
+      handle: parsed.handle,
+      fetchImpl
+    });
+
+    if (resolvedDid) {
+      try {
+        store.upsertActor({
+          did: resolvedDid,
+          handle: parsed.handle
+        });
+      } catch {
+        // Ignore malformed upstream data and fall back to unresolved result.
+      }
+    }
+  }
 
   let response;
   try {
@@ -170,6 +198,41 @@ function handleWebFinger({ url, store, publicBaseUrl }) {
     contentType: "application/jrd+json",
     body: response
   };
+}
+
+async function resolveDidByHandle({ handle, fetchImpl }) {
+  let response;
+  try {
+    response = await fetchImpl(`https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`, {
+      method: "GET",
+      headers: {
+        accept: "application/json"
+      }
+    });
+  } catch {
+    return null;
+  }
+
+  if (!response || response.status < 200 || response.status >= 300) {
+    return null;
+  }
+
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    return null;
+  }
+
+  if (typeof body?.did !== "string") {
+    return null;
+  }
+
+  try {
+    return assertDid(body.did);
+  } catch {
+    return null;
+  }
 }
 
 function handleGetActor({ url, store, keyManager, publicBaseUrl }) {

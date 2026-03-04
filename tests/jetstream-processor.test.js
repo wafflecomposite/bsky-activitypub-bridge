@@ -186,3 +186,46 @@ test("JetstreamProcessor defaults to unlisted audience for creates", () => {
   assert.deepEqual(queued.activity.to, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
   assert.deepEqual(queued.activity.cc, ["https://www.w3.org/ns/activitystreams#Public"]);
 });
+
+test("JetstreamProcessor preserves self-thread reply linkage", () => {
+  const { store, queue, processor } = createProcessorFixture();
+
+  store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/a1",
+    inboxUrl: "https://remote.example/users/a1/inbox"
+  });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 901,
+    commit: {
+      collection: "app.bsky.feed.post",
+      operation: "create",
+      rkey: "thread-reply",
+      record: {
+        text: "reply",
+        createdAt: "2026-03-04T00:00:00.000Z",
+        reply: {
+          parent: {
+            uri: "at://did:plc:alice/app.bsky.feed.post/thread-parent"
+          },
+          root: {
+            uri: "at://did:plc:alice/app.bsky.feed.post/thread-root"
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(result.status, "enqueued");
+  const queued = queue.list()[0];
+  assert.equal(
+    queued.activity.object.inReplyTo,
+    "https://bridge.example/ap/object/did%3Aplc%3Aalice/thread-parent"
+  );
+  assert.equal(
+    queued.activity.object.context,
+    "https://bridge.example/ap/object/did%3Aplc%3Aalice/thread-root"
+  );
+});

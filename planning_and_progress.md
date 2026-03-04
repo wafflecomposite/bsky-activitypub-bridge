@@ -85,6 +85,14 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
 - Expanded AP surface and coverage:
   - actor followers and outbox collection endpoints
   - additional tests for audience mapping, invalid/control event handling, transport error body capture, file key persistence, and live harness helpers
+- Implemented automatic actor materialization on WebFinger lookup:
+  - unknown `acct:` handles are resolved against Bluesky handle resolver
+  - actor records are created on successful DID resolution (no seed-only dependency)
+- Improved reply/thread fidelity for self-thread chains:
+  - self-replies now map `inReplyTo` to bridged object IDs
+  - reply root now maps into ActivityPub `context` for better thread continuity
+- Documented media test fixtures:
+  - added `tests/data/README.md` describing available local image/video fixtures and usage guidance
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
@@ -102,6 +110,23 @@ CI-ready live E2E execution strategy:
 - Gate live tests behind explicit opt-in environment flag and credential presence.
 - Add structured JSON log/events output for easier CI diagnostics.
 - Add automatic artifact retention (run dir, queue/state snapshots) on failure.
+
+## TODO
+- Automatic WebFinger onboarding:
+  - Resolve unknown Bluesky handles to DID at discovery time.
+  - Materialize/update actor profile in store on first lookup/follow.
+- Reply/thread fidelity:
+  - Expand thread context handling for non-self replies where bridged parent objects exist.
+- Media mapping:
+  - Map Bluesky embed/view media into ActivityPub attachments (`Image`/`Document`) with alt text.
+  - Add deterministic unit tests using local fixtures in `tests/data/` (`example_image.jpg`, `example_video.mp4`).
+- AP read-surface completeness:
+  - Implement object dereference endpoint and non-empty outbox pagination backed by cached activities.
+- Federation compatibility hardening:
+  - Add RFC 9421 HTTP Message Signatures support alongside current cavage-style signatures.
+- Production durability/ops:
+  - Move from JSON files to SQLite/Postgres.
+  - Add metrics and alertable delivery failure signals.
 
 ## Notes
 - Durability is currently JSON-file-backed for zero-dependency local/dev reliability.

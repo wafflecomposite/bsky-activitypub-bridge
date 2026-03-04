@@ -93,6 +93,41 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   assert.equal(followersRes.body.totalItems, 1);
 });
 
+test("dispatchBridgeRequest can auto-materialize actor on WebFinger lookup", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  let resolveCalls = 0;
+  const webfingerRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/.well-known/webfinger?resource=acct:autoalice.bsky.social@bridge.example",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      resolveCalls += 1;
+      assert.equal(
+        url,
+        "https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=autoalice.bsky.social"
+      );
+
+      return {
+        status: 200,
+        json: async () => ({
+          did: "did:plc:autoalice123"
+        })
+      };
+    }
+  });
+
+  assert.equal(resolveCalls, 1);
+  assert.equal(webfingerRes.status, 200);
+  assert.equal(webfingerRes.body.subject, "acct:autoalice.bsky.social@bridge.example");
+  assert.equal(store.resolveDidByHandle("autoalice.bsky.social"), "did:plc:autoalice123");
+});
+
 test("dispatchBridgeRequest resolves remote actor and queues Accept delivery", async () => {
   const baseUrl = "https://bridge.example";
   const store = new InMemoryBridgeStore();

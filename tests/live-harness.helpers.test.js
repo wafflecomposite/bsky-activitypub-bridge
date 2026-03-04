@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   buildGtsRequest,
+  evaluateTimelineThread,
   extractTunnelUrlFromLine,
   loadLiveE2ECredentials
 } from "../src/e2e/live-harness.js";
@@ -122,4 +123,52 @@ test("buildGtsRequest sets json body and content-type when body exists", () => {
 
   assert.equal(req.headers["content-type"], "application/json");
   assert.equal(req.body, "{\"resolve\":true}");
+});
+
+test("evaluateTimelineThread detects linked reply by status id", () => {
+  const result = evaluateTimelineThread({
+    statuses: [
+      {
+        id: "100",
+        content: "<p>Bridge automated live e2e root 2026-03-04T00:00:00.000Z</p>",
+        uri: "https://gts.example/users/a/statuses/100"
+      },
+      {
+        id: "101",
+        content: "<p>Bridge automated live e2e reply 2026-03-04T00:00:00.000Z</p>",
+        in_reply_to_id: "100",
+        uri: "https://gts.example/users/a/statuses/101"
+      }
+    ],
+    rootMarker: "Bridge automated live e2e root 2026-03-04T00:00:00.000Z",
+    replyMarker: "Bridge automated live e2e reply 2026-03-04T00:00:00.000Z"
+  });
+
+  assert.equal(result.rootFound, true);
+  assert.equal(result.replyFound, true);
+  assert.equal(result.threadLinked, true);
+  assert.equal(result.rootStatusId, "100");
+  assert.equal(result.replyStatusId, "101");
+});
+
+test("evaluateTimelineThread reports unlinked markers when reply relation missing", () => {
+  const result = evaluateTimelineThread({
+    statuses: [
+      {
+        id: "100",
+        text: "root marker"
+      },
+      {
+        id: "101",
+        text: "reply marker",
+        in_reply_to_id: null
+      }
+    ],
+    rootMarker: "root marker",
+    replyMarker: "reply marker"
+  });
+
+  assert.equal(result.rootFound, true);
+  assert.equal(result.replyFound, true);
+  assert.equal(result.threadLinked, false);
 });

@@ -34,3 +34,12 @@ test("createBridgeApplication uses file-backed components when dataDir is set", 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("createBridgeApplication exposes metrics snapshot before runtime starts", () => {
+  const app = createBridgeApplication();
+  const metrics = app.getMetrics();
+
+  assert.equal(metrics.queueDepth, 0);
+  assert.equal(metrics.delivery.delivered, 0);
+  assert.equal(metrics.jetstream.running, false);
+});

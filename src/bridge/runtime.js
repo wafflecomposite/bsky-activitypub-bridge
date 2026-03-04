@@ -10,6 +10,7 @@ export class BridgeRuntime {
   #worker;
   #jetstreamClient = null;
   #jetstreamDidRefreshTimer = null;
+  #metrics;
 
   constructor({ baseUrl, store = new InMemoryBridgeStore(), state = new InMemoryJetstreamState(), queue = new InMemoryDeliveryQueue(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, shardId = "default", postVisibility = "unlisted", onTransportAttempt = null, onTransportResult = null }) {
     this.store = store;
@@ -35,6 +36,15 @@ export class BridgeRuntime {
       onTransportAttempt,
       onTransportResult
     });
+
+    this.#metrics = {
+      delivered: 0,
+      retryScheduled: 0,
+      permanentFailure: 0,
+      deferred: 0,
+      failed: 0,
+      lastResult: null
+    };
   }
 
   ingestJetstreamEvent(event) {
@@ -51,6 +61,7 @@ export class BridgeRuntime {
       }
 
       results.push(result);
+      this.#recordDeliveryResult(result);
       if (result.status === "deferred") {
         break;
       }
@@ -121,6 +132,47 @@ export class BridgeRuntime {
     }
 
     this.#jetstreamClient.setWantedDids(wantedDids);
+  }
+
+  getMetrics() {
+    return {
+      queueDepth: typeof this.queue?.size === "function" ? this.queue.size() : null,
+      delivery: {
+        delivered: this.#metrics.delivered,
+        retryScheduled: this.#metrics.retryScheduled,
+        permanentFailure: this.#metrics.permanentFailure,
+        deferred: this.#metrics.deferred,
+        failed: this.#metrics.failed,
+        lastResult: this.#metrics.lastResult
+      },
+      jetstream: {
+        running: this.#jetstreamClient !== null
+      }
+    };
+  }
+
+  #recordDeliveryResult(result) {
+    if (!result || typeof result !== "object") {
+      return;
+    }
+
+    if (result.status === "delivered") {
+      this.#metrics.delivered += 1;
+    } else if (result.status === "retry-scheduled") {
+      this.#metrics.retryScheduled += 1;
+    } else if (result.status === "permanent-failure") {
+      this.#metrics.permanentFailure += 1;
+    } else if (result.status === "deferred") {
+      this.#metrics.deferred += 1;
+    } else if (result.status === "failed") {
+      this.#metrics.failed += 1;
+    }
+
+    this.#metrics.lastResult = {
+      status: result.status ?? "unknown",
+      destination: result.destination ?? null,
+      at: new Date().toISOString()
+    };
   }
 }
 

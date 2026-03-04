@@ -135,6 +135,22 @@ export function createBridgeApplication({
     start,
     stop,
     getRuntime: () => runtime,
+    getMetrics: () => (runtime
+      ? runtime.getMetrics()
+      : {
+          queueDepth: typeof resolvedQueue?.size === "function" ? resolvedQueue.size() : null,
+          delivery: {
+            delivered: 0,
+            retryScheduled: 0,
+            permanentFailure: 0,
+            deferred: 0,
+            failed: 0,
+            lastResult: null
+          },
+          jetstream: {
+            running: false
+          }
+        }),
     store: resolvedStore,
     state: resolvedState,
     queue: resolvedQueue,

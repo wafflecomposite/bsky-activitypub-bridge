@@ -160,13 +160,15 @@ export async function runLiveE2EHarness({
       timeoutMs: 90_000,
       log
     });
+    const runtimeMetrics = app.getRuntime()?.getMetrics() ?? null;
 
     const summary = {
       ok: followState.following === true
         && timelineThread.threadLinked === true
         && bridgeReadSurface.ok === true
         && timelineMedia.hasMediaAttachment === true
-        && bridgeMediaObject.hasAttachment === true,
+        && bridgeMediaObject.hasAttachment === true
+        && (runtimeMetrics?.delivery?.delivered ?? 0) >= 3,
       tunnelUrl,
       dataDir: tempDir,
       remoteAcct,
@@ -178,7 +180,8 @@ export async function runLiveE2EHarness({
       bridgeReadSurface,
       postedMedia,
       timelineMedia,
-      bridgeMediaObject
+      bridgeMediaObject,
+      runtimeMetrics
     };
 
     return summary;

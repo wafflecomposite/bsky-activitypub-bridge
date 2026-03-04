@@ -117,6 +117,10 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - structured JSON output and persisted run summary/error artifacts
   - artifact directory retention for failures (and optional cleanup for successful runs)
   - helper module and tests for env parsing and artifact path resolution
+- Implemented runtime delivery health signals:
+  - `BridgeRuntime.getMetrics()` exposes queue depth, delivery counters, and last delivery result snapshot
+  - `createBridgeApplication().getMetrics()` exposes runtime metrics (or pre-start baseline)
+  - live E2E now asserts delivered count and includes runtime metrics in result artifacts
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
@@ -132,7 +136,6 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
 ## Next Milestone
 Federation compatibility and production hardening:
 - Add RFC 9421 HTTP Message Signatures support alongside current cavage-style signatures.
-- Add metrics/health signals for queue depth, retry counts, and permanent delivery failures.
 - Plan migration path from JSON-file durability to SQLite/Postgres.
 
 ## TODO

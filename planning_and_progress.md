@@ -132,6 +132,7 @@ Promote live-network validation from manual checks to repeatable automated E2E, 
   - accepts common Bluesky actor/post identifiers and URL variants (handles, DIDs, acct-style, profile/post URLs, bridge object URLs, AT URIs)
   - returns canonical bridge search targets (remote acct, actor URL, post URL)
   - triggers actor/profile and post materialization on demand during resolution
+  - added machine-friendly resolver endpoint: `GET /api/resolve?q=...`
 - Completed bridged profile fidelity milestone:
   - actor metadata fidelity (avatar/banner/description notice line + bot flag) with pinned-post featured collection support
   - repost create/delete mapping to ActivityPub `Announce`/`Delete`
@@ -156,7 +157,6 @@ Federation compatibility and production hardening:
 ## TODO
 - Discovery UX hardening:
   - expand resolver parsing for additional fediverse profile URL shapes beyond `/profile/...` and bridge-native AP URLs.
-  - add JSON API variant for resolver output to support scripted/CLI discovery workflows.
 - Federation compatibility hardening:
   - Add inbound RFC9421 message-signature verification path alongside the current cavage verifier.
 - Production durability/ops:

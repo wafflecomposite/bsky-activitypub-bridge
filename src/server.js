@@ -147,6 +147,16 @@ export async function dispatchBridgeRequest({
     });
   }
 
+  if (method === "GET" && url.pathname === "/api/resolve") {
+    return handleDiscoveryResolveApi({
+      url,
+      store,
+      publicBaseUrl: baseUrl,
+      fetchImpl,
+      profileCacheMaxAgeMs
+    });
+  }
+
   if (method === "GET" && url.pathname === "/.well-known/webfinger") {
     return handleWebFinger({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
   }
@@ -228,6 +238,49 @@ async function handleDiscoveryFrontpage({ url, store, publicBaseUrl, fetchImpl, 
         result: null,
         error: error instanceof Error ? error.message : String(error)
       })
+    };
+  }
+}
+
+async function handleDiscoveryResolveApi({ url, store, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
+  const query = url.searchParams.get("q") ?? "";
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: {
+        ok: false,
+        error: "Missing q query parameter"
+      }
+    };
+  }
+
+  try {
+    const result = await resolveDiscoveryQuery({
+      query: trimmed,
+      store,
+      publicBaseUrl,
+      fetchImpl,
+      profileCacheMaxAgeMs
+    });
+
+    return {
+      status: 200,
+      contentType: "application/json",
+      body: {
+        ok: true,
+        result
+      }
+    };
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
     };
   }
 }

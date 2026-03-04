@@ -427,6 +427,66 @@ test("dispatchBridgeRequest resolves post discovery query and materializes objec
   assert.equal(cached?.object?.content, "late fetched via frontpage");
 });
 
+test("dispatchBridgeRequest exposes discovery resolver JSON API", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/api/resolve?q=mouseu.bsky.social",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      if (url.includes("/com.atproto.identity.resolveHandle")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:mouseu123"
+          })
+        };
+      }
+
+      if (url.includes("/app.bsky.actor.getProfile")) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:mouseu123",
+            handle: "mouseu.bsky.social"
+          })
+        };
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.result.kind, "actor");
+  assert.equal(response.body.result.acct, "mouseu.bsky.social@bridge.example");
+  assert.equal(response.body.result.actorUrl, "https://bridge.example/ap/actor/did%3Aplc%3Amouseu123");
+});
+
+test("dispatchBridgeRequest discovery resolver JSON API validates missing query", async () => {
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/api/resolve",
+    headers: { host: "bridge.example" },
+    store: new InMemoryBridgeStore(),
+    keyManager: new InMemoryKeyManager(),
+    baseUrl: "https://bridge.example"
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.error, "Missing q query parameter");
+});
+
 test("dispatchBridgeRequest can auto-materialize actor by DID on actor endpoint", async () => {
   const baseUrl = "https://bridge.example";
   const store = new InMemoryBridgeStore();

@@ -145,3 +145,44 @@ test("JetstreamProcessor handles delete by enqueuing Delete activity", () => {
   assert.equal(queued.activity.type, "Delete");
   assert.equal(queued.activity.object, "https://bridge.example/ap/object/did%3Aplc%3Aalice/gone");
 });
+
+test("JetstreamProcessor ignores invalid or control events without throwing", () => {
+  const { queue, processor } = createProcessorFixture();
+
+  const controlLike = processor.process({
+    type: "options_update_ack"
+  });
+
+  assert.equal(controlLike.status, "invalid-event");
+  assert.equal(controlLike.enqueued, 0);
+  assert.equal(queue.size(), 0);
+});
+
+test("JetstreamProcessor defaults to unlisted audience for creates", () => {
+  const { store, queue, processor } = createProcessorFixture();
+
+  store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/a1",
+    inboxUrl: "https://remote.example/users/a1/inbox"
+  });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 900,
+    commit: {
+      collection: "app.bsky.feed.post",
+      operation: "create",
+      rkey: "audience",
+      record: {
+        text: "audience test",
+        createdAt: "2026-03-04T00:00:00.000Z"
+      }
+    }
+  });
+
+  assert.equal(result.status, "enqueued");
+  const queued = queue.list()[0];
+  assert.deepEqual(queued.activity.to, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
+  assert.deepEqual(queued.activity.cc, ["https://www.w3.org/ns/activitystreams#Public"]);
+});

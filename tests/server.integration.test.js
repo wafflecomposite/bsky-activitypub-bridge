@@ -45,6 +45,17 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   assert.equal(actorRes.body.type, "Person");
   assert.equal(actorRes.body.preferredUsername, "alice.bsky.social");
 
+  const outboxRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/outbox",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl
+  });
+  assert.equal(outboxRes.status, 200);
+  assert.equal(outboxRes.body.type, "OrderedCollection");
+
   const followRes = await dispatchBridgeRequest({
     method: "POST",
     rawUrl: "/ap/actor/did%3Aplc%3Aalice/inbox",
@@ -69,6 +80,17 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   const followers = store.listFollowers("did:plc:alice");
   assert.equal(followers.length, 1);
   assert.equal(followers[0].actorId, "https://remote.example/users/bob");
+
+  const followersRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/followers",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl
+  });
+  assert.equal(followersRes.status, 200);
+  assert.equal(followersRes.body.totalItems, 1);
 });
 
 test("dispatchBridgeRequest resolves remote actor and queues Accept delivery", async () => {

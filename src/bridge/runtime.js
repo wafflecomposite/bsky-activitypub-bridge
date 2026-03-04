@@ -11,7 +11,7 @@ export class BridgeRuntime {
   #jetstreamClient = null;
   #jetstreamDidRefreshTimer = null;
 
-  constructor({ baseUrl, store = new InMemoryBridgeStore(), state = new InMemoryJetstreamState(), queue = new InMemoryDeliveryQueue(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, shardId = "default", onTransportAttempt = null, onTransportResult = null }) {
+  constructor({ baseUrl, store = new InMemoryBridgeStore(), state = new InMemoryJetstreamState(), queue = new InMemoryDeliveryQueue(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, shardId = "default", postVisibility = "unlisted", onTransportAttempt = null, onTransportResult = null }) {
     this.store = store;
     this.queue = queue;
     this.state = state;
@@ -23,7 +23,8 @@ export class BridgeRuntime {
       queue,
       store,
       baseUrl,
-      shardId: this.shardId
+      shardId: this.shardId,
+      postVisibility
     });
 
     this.#worker = new DeliveryWorker({

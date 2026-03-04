@@ -1,5 +1,5 @@
 import { actorId, objectId } from "../domain/identifiers.js";
-import { mapBskyPostToActivityPub } from "../bridge/post-mapper.js";
+import { buildAudience, mapBskyPostToActivityPub } from "../bridge/post-mapper.js";
 import { planDeliveryTargets } from "../delivery/recipient-planner.js";
 
 export class JetstreamProcessor {
@@ -8,17 +8,29 @@ export class JetstreamProcessor {
   #store;
   #baseUrl;
   #shardId;
+  #postVisibility;
 
-  constructor({ state, queue, store, baseUrl, shardId = "default" }) {
+  constructor({ state, queue, store, baseUrl, shardId = "default", postVisibility = "unlisted" }) {
     this.#state = state;
     this.#queue = queue;
     this.#store = store;
     this.#baseUrl = baseUrl;
     this.#shardId = shardId;
+    this.#postVisibility = postVisibility;
   }
 
   process(event) {
-    const parsed = normalizeJetstreamEvent(event);
+    let parsed;
+    try {
+      parsed = normalizeJetstreamEvent(event);
+    } catch (error) {
+      return {
+        status: "invalid-event",
+        enqueued: 0,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+
     const note = this.#state.noteEvent(this.#shardId, parsed.eventKey, parsed.timeUs);
 
     if (note.duplicate) {
@@ -57,13 +69,24 @@ export class JetstreamProcessor {
       };
     }
 
-    const activity = mapEventToActivity({
-      baseUrl: this.#baseUrl,
-      did: parsed.did,
-      rkey: parsed.rkey,
-      operation: parsed.operation,
-      record: parsed.record
-    });
+    let activity;
+    try {
+      activity = mapEventToActivity({
+        baseUrl: this.#baseUrl,
+        did: parsed.did,
+        rkey: parsed.rkey,
+        operation: parsed.operation,
+        record: parsed.record,
+        visibility: this.#postVisibility
+      });
+    } catch (error) {
+      return {
+        status: "invalid-event",
+        cursor: note.cursor,
+        enqueued: 0,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
 
     let enqueued = 0;
     for (const delivery of deliveryPlan.deliveries) {
@@ -160,10 +183,11 @@ function isPostCommit(parsed) {
   return ["create", "update", "delete"].includes(parsed.operation);
 }
 
-function mapEventToActivity({ baseUrl, did, rkey, operation, record }) {
+function mapEventToActivity({ baseUrl, did, rkey, operation, record, visibility }) {
   if (operation === "delete") {
     const actor = actorId(baseUrl, did);
     const id = objectId(baseUrl, did, rkey);
+    const audience = buildAudience({ baseUrl, did, visibility });
 
     return {
       "@context": "https://www.w3.org/ns/activitystreams",
@@ -171,7 +195,8 @@ function mapEventToActivity({ baseUrl, did, rkey, operation, record }) {
       type: "Delete",
       actor,
       object: id,
-      to: ["https://www.w3.org/ns/activitystreams#Public"]
+      to: audience.to,
+      cc: audience.cc
     };
   }
 
@@ -183,7 +208,8 @@ function mapEventToActivity({ baseUrl, did, rkey, operation, record }) {
     baseUrl,
     did,
     rkey,
-    record
+    record,
+    visibility
   });
 
   if (operation === "update") {

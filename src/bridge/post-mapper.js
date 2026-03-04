@@ -5,13 +5,14 @@ import {
 } from "../domain/identifiers.js";
 
 const PUBLIC_AUDIENCE = "https://www.w3.org/ns/activitystreams#Public";
+const DEFAULT_VISIBILITY = "unlisted";
 
-export function mapBskyPostToActivityPub({ baseUrl, did, rkey, record }) {
+export function mapBskyPostToActivityPub({ baseUrl, did, rkey, record, visibility = DEFAULT_VISIBILITY }) {
   validateRecord(record);
 
   const attributedTo = actorId(baseUrl, did);
-  const followers = actorFollowersId(baseUrl, did);
   const noteId = objectId(baseUrl, did, rkey);
+  const audience = buildAudience({ baseUrl, did, visibility });
 
   const rendered = renderContentWithFacets({
     text: record.text,
@@ -25,8 +26,8 @@ export function mapBskyPostToActivityPub({ baseUrl, did, rkey, record }) {
     attributedTo,
     content: rendered.content,
     published: record.createdAt,
-    to: [PUBLIC_AUDIENCE],
-    cc: [followers],
+    to: audience.to,
+    cc: audience.cc,
     tag: rendered.tags
   };
 
@@ -47,12 +48,39 @@ export function mapBskyPostToActivityPub({ baseUrl, did, rkey, record }) {
     type: "Create",
     actor: attributedTo,
     published: record.createdAt,
-    to: [PUBLIC_AUDIENCE],
-    cc: [followers],
+    to: audience.to,
+    cc: audience.cc,
     object: note
   };
 
   return { note, create };
+}
+
+export function buildAudience({ baseUrl, did, visibility = DEFAULT_VISIBILITY }) {
+  const followers = actorFollowersId(baseUrl, did);
+
+  if (visibility === "public") {
+    return {
+      to: [PUBLIC_AUDIENCE],
+      cc: [followers]
+    };
+  }
+
+  if (visibility === "followers") {
+    return {
+      to: [followers],
+      cc: []
+    };
+  }
+
+  if (visibility === "unlisted") {
+    return {
+      to: [followers],
+      cc: [PUBLIC_AUDIENCE]
+    };
+  }
+
+  throw new Error(`Unsupported visibility: ${visibility}`);
 }
 
 function renderContentWithFacets({ text, facets = [], baseUrl }) {

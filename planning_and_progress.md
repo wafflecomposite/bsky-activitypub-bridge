@@ -1,7 +1,7 @@
 # Planning and Progress
 
 ## Current Goal
-Finalize real-network readiness controls around startup wiring, Jetstream DID refresh, delivery observability hooks, and strict inbox signature policy.
+Promote live-network validation from manual checks to repeatable automated E2E, then prepare CI-compatible hardening.
 
 ## Completed
 - Initialized a runnable Node.js project with zero external runtime dependencies.
@@ -65,23 +65,43 @@ Finalize real-network readiness controls around startup wiring, Jetstream DID re
   - data directory persistence toggle (`DATA_DIR`)
 - Prepared real-world tunnel test tooling:
   - local `cloudflared` binary bootstrap for `trycloudflare`
-  - local credential/tunnel workflow instructions updated in `test_credentials.md`
+  - dedicated live runbook in `live_testing.md`
+  - machine-readable local secrets file support (`test_credentials.json`, gitignored)
 - Implemented outbound transport abstraction with observability hooks:
   - `HttpDeliveryTransport` for signed delivery HTTP calls
   - transport attempt/result callbacks for metrics/logging integration
+- Implemented automated live E2E harness:
+  - script: `npm run e2e:live`
+  - quick tunnel startup/shutdown orchestration
+  - two-phase bridge startup (discovery mode, then ingest mode)
+  - GtS remote discovery + follow state polling
+  - real Bluesky post publish + GtS home timeline assertion
+  - robust handling for transient tunnel/bootstrap fetch failures
+- Hardened live E2E reliability based on observed quirks:
+  - persistent key manager wired for data-dir runs to keep signing keys stable across restarts
+  - GtS search path standardized on `/api/v2/search` with full remote acct query
+  - follow call request formatting fixed (no JSON content-type on empty POST body)
+  - bridge post visibility defaulted to `unlisted` to avoid federated public feed noise
+- Expanded AP surface and coverage:
+  - actor followers and outbox collection endpoints
+  - additional tests for audience mapping, invalid/control event handling, transport error body capture, file key persistence, and live harness helpers
 - Added unit and integration-style tests for all implemented behavior.
 
 ## Verification Status
 - Test commands:
   - `npm test`
   - `npm run e2e:local`
-- Result: all tests passing (24/24) and local E2E harness succeeds.
+  - `npm run e2e:live`
+- Result:
+  - automated suite passing (26/26)
+  - local E2E harness succeeds
+  - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel
 
 ## Next Milestone
-Real-world E2E with live services:
-- Run a credentialed staging flow against real Jetstream and a real remote ActivityPub account/server.
-- Validate follow discovery, signed inbox delivery, and post propagation end-to-end with real network responses.
-- Capture reproducible test steps and expected outputs for repeated live checks.
+CI-ready live E2E execution strategy:
+- Gate live tests behind explicit opt-in environment flag and credential presence.
+- Add structured JSON log/events output for easier CI diagnostics.
+- Add automatic artifact retention (run dir, queue/state snapshots) on failure.
 
 ## Notes
 - Durability is currently JSON-file-backed for zero-dependency local/dev reliability.

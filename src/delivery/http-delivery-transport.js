@@ -37,12 +37,25 @@ export class HttpDeliveryTransport {
         body
       });
 
+      let responseBody = null;
+      if (response.status >= 400) {
+        try {
+          responseBody = await response.text();
+          if (responseBody.length > 400) {
+            responseBody = `${responseBody.slice(0, 400)}...`;
+          }
+        } catch {
+          responseBody = null;
+        }
+      }
+
       if (this.#onResult) {
         this.#onResult({
           destination,
           status: response.status,
           durationMs: this.#now() - startedAt,
-          metadata
+          metadata,
+          responseBody
         });
       }
 

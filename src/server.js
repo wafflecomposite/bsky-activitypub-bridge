@@ -5,7 +5,7 @@ import { processInboxActivity } from "./ap/follow.js";
 import { resolveFollowerEndpoints } from "./ap/remote-actor.js";
 import { resolveWebFingerResource } from "./ap/webfinger.js";
 import { InMemoryKeyManager } from "./crypto/key-manager.js";
-import { decodeDidFromPath } from "./domain/identifiers.js";
+import { actorFollowersId, actorOutboxId, decodeDidFromPath } from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
 
 export function createBridgeServer({ baseUrl = null, store = new InMemoryBridgeStore(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, deliveryQueue = null, actorCache = null, inboxSignatureVerifier = null } = {}) {
@@ -107,6 +107,14 @@ export async function dispatchBridgeRequest({ method, rawUrl, headers = {}, body
   }
 
   if (method === "GET" && url.pathname.startsWith("/ap/actor/")) {
+    if (url.pathname.endsWith("/followers")) {
+      return handleGetFollowers({ url, store, publicBaseUrl: baseUrl });
+    }
+
+    if (url.pathname.endsWith("/outbox")) {
+      return handleGetOutbox({ url, store, publicBaseUrl: baseUrl });
+    }
+
     return handleGetActor({ url, store, keyManager, publicBaseUrl: baseUrl });
   }
 
@@ -198,6 +206,77 @@ function handleGetActor({ url, store, keyManager, publicBaseUrl }) {
     status: 200,
     contentType: "application/activity+json",
     body: actor
+  };
+}
+
+function handleGetFollowers({ url, store, publicBaseUrl }) {
+  let did;
+  try {
+    const didPath = url.pathname.slice("/ap/actor/".length, -"/followers".length);
+    did = decodeDidFromPath(didPath);
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: error.message }
+    };
+  }
+
+  if (!store.getActorByDid(did)) {
+    return {
+      status: 404,
+      contentType: "application/json",
+      body: { error: "Bridge actor not found" }
+    };
+  }
+
+  const followers = store.listFollowers(did);
+  const id = actorFollowersId(publicBaseUrl, did);
+
+  return {
+    status: 200,
+    contentType: "application/activity+json",
+    body: {
+      "@context": "https://www.w3.org/ns/activitystreams",
+      id,
+      type: "OrderedCollection",
+      totalItems: followers.length,
+      orderedItems: followers.map((follower) => follower.actorId)
+    }
+  };
+}
+
+function handleGetOutbox({ url, store, publicBaseUrl }) {
+  let did;
+  try {
+    const didPath = url.pathname.slice("/ap/actor/".length, -"/outbox".length);
+    did = decodeDidFromPath(didPath);
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: error.message }
+    };
+  }
+
+  if (!store.getActorByDid(did)) {
+    return {
+      status: 404,
+      contentType: "application/json",
+      body: { error: "Bridge actor not found" }
+    };
+  }
+
+  return {
+    status: 200,
+    contentType: "application/activity+json",
+    body: {
+      "@context": "https://www.w3.org/ns/activitystreams",
+      id: actorOutboxId(publicBaseUrl, did),
+      type: "OrderedCollection",
+      totalItems: 0,
+      orderedItems: []
+    }
   };
 }
 

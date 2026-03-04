@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
-    "e2e:local": "node scripts/run-local-e2e.js"
+    "e2e:local": "node scripts/run-local-e2e.js",
+    "e2e:live": "node scripts/run-live-e2e.js"
   }
 }

@@ -9,6 +9,7 @@ const app = createBridgeApplication({
   baseUrl,
   dataDir,
   strictInboxSignatures: parseBoolean(process.env.STRICT_INBOX_SIGNATURES, false),
+  postVisibility: process.env.BRIDGE_POST_VISIBILITY ?? "unlisted",
   signatureMaxAgeSeconds: parseInteger(process.env.INBOX_SIGNATURE_MAX_AGE_SECONDS, 300),
   jetstream: {
     enabled: parseBoolean(process.env.ENABLE_JETSTREAM, false),

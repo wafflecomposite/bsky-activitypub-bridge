@@ -19,6 +19,8 @@ test("mapBskyPostToActivityPub maps basic post to Note and Create", () => {
   assert.equal(result.note.type, "Note");
   assert.equal(result.note.content, "Hello world");
   assert.equal(result.note.id, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post1");
+  assert.deepEqual(result.note.to, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
+  assert.deepEqual(result.note.cc, ["https://www.w3.org/ns/activitystreams#Public"]);
   assert.equal(result.create.type, "Create");
   assert.equal(result.create.object.id, result.note.id);
 });
@@ -122,4 +124,20 @@ test("mapBskyPostToActivityPub maps reply and labels", () => {
   assert.equal(result.note.inReplyTo, "https://bsky.app/profile/did:plc:bob/post/xyz");
   assert.equal(result.note.sensitive, true);
   assert.equal(result.note.summary, "Content warning: nsfw");
+});
+
+test("mapBskyPostToActivityPub supports explicit public visibility", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post5",
+    visibility: "public",
+    record: {
+      text: "public",
+      createdAt: "2026-03-04T00:00:00.000Z"
+    }
+  });
+
+  assert.deepEqual(result.note.to, ["https://www.w3.org/ns/activitystreams#Public"]);
+  assert.deepEqual(result.note.cc, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
 });

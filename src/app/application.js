@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { RemoteActorCache } from "../ap/remote-actor-cache.js";
 import { BridgeRuntime } from "../bridge/runtime.js";
+import { FileKeyManager } from "../crypto/file-key-manager.js";
 import { InMemoryKeyManager } from "../crypto/key-manager.js";
 import { FileDeliveryQueue } from "../delivery/file-delivery-queue.js";
 import { verifyInboxRequestSignature } from "../federation/inbox-signature-verifier.js";
@@ -20,6 +21,7 @@ export function createBridgeApplication({
   keyManager = null,
   actorCache = null,
   strictInboxSignatures = false,
+  postVisibility = "unlisted",
   signatureMaxAgeSeconds = 300,
   fetchImpl = fetch,
   shardId = "default",
@@ -40,7 +42,9 @@ export function createBridgeApplication({
     ? new FileDeliveryQueue({ filePath: join(dataDir, "queue.json") })
     : new InMemoryDeliveryQueue());
 
-  const resolvedKeyManager = keyManager ?? new InMemoryKeyManager();
+  const resolvedKeyManager = keyManager ?? (dataDir
+    ? new FileKeyManager({ filePath: join(dataDir, "keys.json") })
+    : new InMemoryKeyManager());
   const resolvedActorCache = actorCache ?? new RemoteActorCache();
 
   const inboxSignatureVerifier = strictInboxSignatures
@@ -78,6 +82,7 @@ export function createBridgeApplication({
       keyManager: resolvedKeyManager,
       fetchImpl,
       shardId,
+      postVisibility,
       onTransportAttempt: delivery.onTransportAttempt ?? null,
       onTransportResult: delivery.onTransportResult ?? null
     });

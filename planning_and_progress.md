@@ -144,11 +144,25 @@ Federation compatibility and production hardening:
 - Plan migration path from JSON-file durability to SQLite/Postgres.
 
 ## TODO
+- Priority P0: end-user discovery workflow (single input frontpage resolver):
+  - Add minimal frontpage with one “anything goes” input that accepts Bluesky user/post identifiers and URLs.
+  - Normalize common user inputs:
+    - `mouseu.bsky.social`
+    - `@mouseu.bsky.social`
+    - `https://bsky.app/profile/did:...`
+    - `https://bsky.app/profile/<handle>`
+    - bridged/domain-style actor inputs such as `@lnkr.gts.burning.homes.ap.brid.gy`, `@autumnivy.net`, `@bsky.app`, and similar variants.
+  - Normalize common post inputs:
+    - `https://bsky.app/profile/<id-or-handle>/post/<rkey>`
+    - equivalent frequently used variants from other nodes/domains.
+  - Return canonical bridge URLs suitable for Mastodon/GtS search for both actor and post discovery.
+  - Fetch/materialize actors and posts on demand when not yet cached so discovery does not depend on pre-seeding.
+  - Guarantee old bridged posts remain dereferenceable for federation fetches (e.g. repost/boost retrieval by other instances).
 - Federation compatibility hardening:
-  - Add RFC 9421 HTTP Message Signatures support alongside current cavage-style signatures.
+  - Add inbound RFC9421 message-signature verification path alongside the current cavage verifier.
 - Production durability/ops:
   - Move from JSON files to SQLite/Postgres.
-  - Add metrics and alertable delivery failure signals.
+  - Add explicit operational alerting for sustained delivery failures / backlog growth.
 
 ## Notes
 - Durability is currently JSON-file-backed for zero-dependency local/dev reliability.

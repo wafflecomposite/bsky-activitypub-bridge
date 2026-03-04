@@ -1,1 +1,3 @@
 test_credentials.md
+tools/bin/cloudflared
+.data/

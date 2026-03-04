@@ -63,6 +63,9 @@ Finalize real-network readiness controls around startup wiring, Jetstream DID re
   - env-driven runtime/server configuration in `src/index.js`
   - strict inbox signature mode toggle (`STRICT_INBOX_SIGNATURES`)
   - data directory persistence toggle (`DATA_DIR`)
+- Prepared real-world tunnel test tooling:
+  - local `cloudflared` binary bootstrap for `trycloudflare`
+  - local credential/tunnel workflow instructions updated in `test_credentials.md`
 - Implemented outbound transport abstraction with observability hooks:
   - `HttpDeliveryTransport` for signed delivery HTTP calls
   - transport attempt/result callbacks for metrics/logging integration

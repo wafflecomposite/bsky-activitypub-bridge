@@ -72,7 +72,11 @@ export async function runLiveE2EHarness({
       blueskyIdentifier: resolvedCredentials.blueskyIdentifier
     });
 
-    const remoteAcct = `${resolvedCredentials.blueskyIdentifier}@${new URL(tunnelUrl).host}`;
+    const resolverActor = await verifyResolverActorTarget({
+      tunnelUrl,
+      query: resolvedCredentials.blueskyIdentifier
+    });
+    const remoteAcct = resolverActor.target;
     const discovered = await discoverRemoteAccountWithRetry({
       instanceUrl: resolvedCredentials.gtsInstanceUrl,
       accessToken: resolvedCredentials.gtsAccessToken,
@@ -136,6 +140,19 @@ export async function runLiveE2EHarness({
 
     const rootRkey = extractPostRkeyFromAtUri(postedThread.root.uri);
     const replyRkey = extractPostRkeyFromAtUri(postedThread.reply.uri);
+    const resolverPost = await verifyResolverPostTarget({
+      tunnelUrl,
+      handle: resolvedCredentials.blueskyIdentifier,
+      rkey: rootRkey
+    });
+    const resolverPostSearch = await waitForStatusSearchByUrl({
+      instanceUrl: resolvedCredentials.gtsInstanceUrl,
+      accessToken: resolvedCredentials.gtsAccessToken,
+      targetUrl: resolverPost.target,
+      marker: postedThread.root.marker,
+      timeoutMs: 180_000,
+      log
+    });
     const bridgeReadSurface = await waitForBridgeThreadReadSurface({
       tunnelUrl,
       did,
@@ -201,6 +218,9 @@ export async function runLiveE2EHarness({
         && bridgeActorProfile.avatarMatches === true
         && bridgeActorProfile.bannerMatches === true
         && bridgeActorProfile.summaryContainsDescription === true
+        && resolverActor.ok === true
+        && resolverPost.ok === true
+        && resolverPostSearch.found === true
         && timelineThread.threadLinked === true
         && bridgeReadSurface.ok === true
         && timelineMedia.hasMediaAttachment === true
@@ -214,7 +234,10 @@ export async function runLiveE2EHarness({
       discovered,
       followState,
       bridgeActorProfile,
+      resolverActor,
       postedThread,
+      resolverPost,
+      resolverPostSearch,
       timelineThread,
       bridgeReadSurface,
       postedMedia,
@@ -425,6 +448,75 @@ async function verifyBridgeActorProfile({ tunnelUrl, port, did, blueskyIdentifie
     bannerMatches,
     summaryContainsDescription
   };
+}
+
+async function verifyResolverActorTarget({ tunnelUrl, query }) {
+  const jsonResult = await resolveDiscoveryTargetViaApi({ tunnelUrl, query });
+  const htmlTarget = await resolveDiscoveryTargetViaHtml({ tunnelUrl, query });
+
+  return {
+    ok: jsonResult.kind === "actor" && jsonResult.target === htmlTarget,
+    kind: jsonResult.kind,
+    target: jsonResult.target,
+    htmlTarget
+  };
+}
+
+async function verifyResolverPostTarget({ tunnelUrl, handle, rkey }) {
+  const query = `https://bsky.app/profile/${handle}/post/${rkey}`;
+  const jsonResult = await resolveDiscoveryTargetViaApi({ tunnelUrl, query });
+  const htmlTarget = await resolveDiscoveryTargetViaHtml({ tunnelUrl, query });
+  const expectedPostUrl = `${tunnelUrl}/ap/object/${encodeURIComponent(jsonResult.did)}/${encodeURIComponent(rkey)}`;
+
+  return {
+    ok: jsonResult.kind === "post" && jsonResult.target === htmlTarget && jsonResult.target === expectedPostUrl,
+    kind: jsonResult.kind,
+    did: jsonResult.did,
+    target: jsonResult.target,
+    htmlTarget,
+    query
+  };
+}
+
+async function resolveDiscoveryTargetViaApi({ tunnelUrl, query }) {
+  const response = await fetch(`${tunnelUrl}/api/resolve?q=${encodeURIComponent(query)}`);
+  if (!response.ok) {
+    throw new Error(`resolver api failed: ${response.status}`);
+  }
+
+  const body = await response.json();
+  if (!body?.ok || !body?.result || typeof body.result !== "object") {
+    throw new Error("resolver api returned invalid payload");
+  }
+
+  if (body.result.kind === "post") {
+    return {
+      kind: "post",
+      did: body.result.did,
+      target: body.result.postUrl
+    };
+  }
+
+  return {
+    kind: "actor",
+    did: body.result.did,
+    target: body.result.acct
+  };
+}
+
+async function resolveDiscoveryTargetViaHtml({ tunnelUrl, query }) {
+  const response = await fetch(`${tunnelUrl}/?q=${encodeURIComponent(query)}`);
+  if (!response.ok) {
+    throw new Error(`resolver html failed: ${response.status}`);
+  }
+
+  const html = await response.text();
+  const target = extractResolvedTargetFromHtml(html);
+  if (!target) {
+    throw new Error("resolver html did not include resolved target");
+  }
+
+  return target;
 }
 
 async function discoverRemoteAccountWithRetry({ instanceUrl, accessToken, remoteAcct, timeoutMs, log }) {
@@ -792,6 +884,55 @@ function statusContainsMarker(status, marker) {
   return content.includes(marker) || text.includes(marker);
 }
 
+export function extractResolvedTargetFromHtml(html) {
+  if (typeof html !== "string") {
+    return null;
+  }
+
+  const match = /<code[^>]*id=["']resolved-target["'][^>]*>([^<]+)<\/code>/i.exec(html);
+  if (!match) {
+    return null;
+  }
+
+  return decodeHtmlEntities(match[1].trim());
+}
+
+async function waitForStatusSearchByUrl({ instanceUrl, accessToken, targetUrl, marker, timeoutMs, log }) {
+  const startedAt = Date.now();
+  let last = {
+    found: false,
+    statusId: null
+  };
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const body = await gtsApi({
+        instanceUrl,
+        accessToken,
+        path: `/api/v2/search?q=${encodeURIComponent(targetUrl)}&resolve=true&limit=20&type=statuses&offset=0`,
+        timeoutMs: 30_000
+      });
+
+      const statuses = Array.isArray(body?.statuses) ? body.statuses : [];
+      const status = statuses.find((entry) => statusContainsMarker(entry, marker)) ?? null;
+      last = {
+        found: status !== null,
+        statusId: status?.id ?? null
+      };
+
+      if (last.found) {
+        return last;
+      }
+    } catch (error) {
+      log(`resolver post search retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(3_000);
+  }
+
+  return last;
+}
+
 async function waitForBridgeThreadReadSurface({
   tunnelUrl,
   did,
@@ -982,6 +1123,15 @@ export function buildGtsRequest({ accessToken, method = "GET", body = null }) {
 
 function stripTrailingSlash(value) {
   return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+function decodeHtmlEntities(value) {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&#39;", "'");
 }
 
 async function waitForCondition(check, timeoutMs, intervalMs) {

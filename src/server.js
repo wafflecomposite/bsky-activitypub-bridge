@@ -915,7 +915,7 @@ function renderDiscoveryFrontpage({ publicBaseUrl, input, result, error }) {
 <body>
   <main>
     <h1>Bluesky Bridge Resolver</h1>
-    <p>Paste a Bluesky user or post and copy the account address for Mastodon/GtS search.</p>
+    <p>Paste a Bluesky user or post and copy the single search target for Mastodon/GtS.</p>
     <div class="box">
       <form method="get" action="/">
         <input type="text" name="q" value="${escapedInput}" placeholder="mouseu.bsky.social or https://bsky.app/profile/.../post/..." autocomplete="off">
@@ -937,11 +937,18 @@ function renderDiscoveryResult(result, error) {
     return `<p class="hint">Supported examples: <code>mouseu.bsky.social</code>, <code>@mouseu.bsky.social</code>, <code>https://bsky.app/profile/<id>/post/<rkey></code></p>`;
   }
 
-  const acct = escapeHtml(result.acct);
-  return `<p>Search this account address in your fediverse server:</p>
+  const target = result.kind === "post"
+    ? result.postUrl
+    : result.acct;
+  const label = result.kind === "post"
+    ? "Search this post URL in your fediverse server:"
+    : "Search this account address in your fediverse server:";
+  const escapedTarget = escapeHtml(target);
+
+  return `<p>${label}</p>
 <div class="copy-row">
-  <code id="resolved-acct">${acct}</code>
-  <button class="copy-btn" type="button" onclick="navigator.clipboard?.writeText('${acct}')">Copy</button>
+  <code id="resolved-target">${escapedTarget}</code>
+  <button class="copy-btn" type="button" onclick="navigator.clipboard?.writeText(document.getElementById('resolved-target')?.textContent ?? '')">Copy</button>
 </div>`;
 }
 

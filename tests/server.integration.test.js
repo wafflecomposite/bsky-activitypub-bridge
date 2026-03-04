@@ -375,6 +375,7 @@ test("dispatchBridgeRequest resolves actor discovery query and materializes acto
   assert.equal(response.body.includes("autoalice.bsky.social@bridge.example"), true);
   assert.equal(response.body.includes("Copy"), true);
   assert.equal(response.body.includes("ap/actor/did%3Aplc%3Aautoalice123"), false);
+  assert.equal(response.body.includes("resolved-target"), true);
   assert.equal(requestedUrls.some((url) => url.includes("/com.atproto.identity.resolveHandle")), true);
   assert.equal(requestedUrls.some((url) => url.includes("/app.bsky.actor.getProfile")), true);
 });
@@ -435,7 +436,8 @@ test("dispatchBridgeRequest resolves post discovery query and materializes objec
 
   assert.equal(response.status, 200);
   assert.equal(response.contentType, "text/html");
-  assert.equal(response.body.includes("autoalice.bsky.social@bridge.example"), true);
+  assert.equal(response.body.includes("https://bridge.example/ap/object/did%3Aplc%3Aautoalice123/late1"), true);
+  assert.equal(response.body.includes("autoalice.bsky.social@bridge.example"), false);
   const cached = store.getObjectByRkey("did:plc:autoalice123", "late1");
   assert.equal(cached?.object?.content, "late fetched via frontpage");
 });

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import {
   buildGtsRequest,
   evaluateTimelineThread,
+  extractResolvedTargetFromHtml,
   extractPostRkeyFromAtUri,
   extractTunnelUrlFromLine,
   loadLiveE2ECredentials
@@ -185,4 +186,23 @@ test("extractPostRkeyFromAtUri rejects non-post at uri", () => {
   assert.throws(() => {
     extractPostRkeyFromAtUri("at://did:plc:alice/app.bsky.actor.profile/self");
   }, /Invalid AT URI for post/);
+});
+
+test("extractResolvedTargetFromHtml reads resolver target code block", () => {
+  const html = `
+    <div class="copy-row">
+      <code id="resolved-target">alice.bsky.social@bridge.example</code>
+      <button type="button">Copy</button>
+    </div>
+  `;
+
+  assert.equal(extractResolvedTargetFromHtml(html), "alice.bsky.social@bridge.example");
+});
+
+test("extractResolvedTargetFromHtml decodes escaped entities", () => {
+  const html = `<code id="resolved-target">https://bridge.example/ap/object/did%3Aplc%3Aalice/root1&amp;x=1</code>`;
+  assert.equal(
+    extractResolvedTargetFromHtml(html),
+    "https://bridge.example/ap/object/did%3Aplc%3Aalice/root1&x=1"
+  );
 });

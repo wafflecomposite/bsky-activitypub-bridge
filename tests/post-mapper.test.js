@@ -1,0 +1,125 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mapBskyPostToActivityPub } from "../src/bridge/post-mapper.js";
+
+const baseUrl = "https://bridge.example";
+const did = "did:plc:alice";
+
+test("mapBskyPostToActivityPub maps basic post to Note and Create", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post1",
+    record: {
+      text: "Hello world",
+      createdAt: "2026-03-04T00:00:00.000Z"
+    }
+  });
+
+  assert.equal(result.note.type, "Note");
+  assert.equal(result.note.content, "Hello world");
+  assert.equal(result.note.id, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post1");
+  assert.equal(result.create.type, "Create");
+  assert.equal(result.create.object.id, result.note.id);
+});
+
+test("mapBskyPostToActivityPub renders UTF-8 facet ranges into links", () => {
+  const text = "Hi 💙 @bob";
+
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post2",
+    record: {
+      text,
+      createdAt: "2026-03-04T00:00:00.000Z",
+      facets: [
+        {
+          index: {
+            byteStart: 8,
+            byteEnd: 12
+          },
+          features: [
+            {
+              $type: "app.bsky.richtext.facet#mention",
+              did: "did:plc:bob"
+            }
+          ]
+        }
+      ]
+    }
+  });
+
+  assert.equal(
+    result.note.content,
+    'Hi 💙 <a href="https://bridge.example/ap/actor/did%3Aplc%3Abob">@bob</a>'
+  );
+  assert.equal(result.note.tag[0].type, "Mention");
+  assert.equal(result.note.tag[0].href, "https://bridge.example/ap/actor/did%3Aplc%3Abob");
+});
+
+test("mapBskyPostToActivityPub drops overlapping facets", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post3",
+    record: {
+      text: "https://example.com",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      facets: [
+        {
+          index: {
+            byteStart: 0,
+            byteEnd: 19
+          },
+          features: [
+            {
+              $type: "app.bsky.richtext.facet#link",
+              uri: "https://example.com"
+            }
+          ]
+        },
+        {
+          index: {
+            byteStart: 1,
+            byteEnd: 5
+          },
+          features: [
+            {
+              $type: "app.bsky.richtext.facet#tag",
+              tag: "ignored"
+            }
+          ]
+        }
+      ]
+    }
+  });
+
+  assert.equal(
+    result.note.content,
+    '<a href="https://example.com">https://example.com</a>'
+  );
+  assert.equal(result.note.tag.length, 0);
+});
+
+test("mapBskyPostToActivityPub maps reply and labels", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post4",
+    record: {
+      text: "reply",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      labels: [{ val: "nsfw" }],
+      reply: {
+        parent: {
+          uri: "at://did:plc:bob/app.bsky.feed.post/xyz"
+        }
+      }
+    }
+  });
+
+  assert.equal(result.note.inReplyTo, "https://bsky.app/profile/did:plc:bob/post/xyz");
+  assert.equal(result.note.sensitive, true);
+  assert.equal(result.note.summary, "Content warning: nsfw");
+});

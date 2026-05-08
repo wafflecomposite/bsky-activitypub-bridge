@@ -70,6 +70,7 @@ The automated harness:
 - publishes a real Bluesky thread and verifies delivery/linkage in GtS
 - verifies bridge outbox/object endpoints for the thread
 - publishes a media post and verifies GtS plus AP attachment output
+- publishes a labeled media post and verifies GtS plus AP CW/sensitive-media output
 - publishes a repost and verifies ActivityPub `Announce`
 - waits for delivery queue drain and checks runtime delivery metrics
 

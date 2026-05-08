@@ -30,7 +30,7 @@ Bluesky side:
 - Unknown handles can be resolved/materialized on WebFinger or resolver lookup.
 - Jetstream ingest supports scoped wanted DIDs/collections, cursor/dedup state, reconnect rewind, and client-side DID filtering.
 - Unfiltered Jetstream is blocked by default unless `UNSAFE_ALLOW_UNFILTERED_JETSTREAM` is set.
-- Post mapper covers text facets, links, mentions, hashtags, replies/thread context, original Bluesky web URLs, self-label content warnings, media/external/record embeds, reposts, updates, and deletes.
+- Post mapper covers text facets, links, mentions, hashtags, replies/thread context, original Bluesky web URLs, Bluesky content labels/CWs with sensitive media flags, media/external/record embeds, reposts, updates, and deletes.
 
 Delivery and durability:
 - Delivery planner groups by shared inbox with inbox fallback.
@@ -41,7 +41,7 @@ Delivery and durability:
 Testing:
 - Unit/integration coverage spans identifiers, AP generation, follow handling, signatures, resolver parsing, post mapping, stores, queues, Jetstream, runtime wiring, server dispatch, and recovery.
 - Local E2E covers ingest, retry/delivery, and cursor continuity.
-- Live E2E uses real Bluesky + GtS through a Cloudflare tunnel and covers discovery, follow, resolver actor/post targets, unfollowed post import, threaded delivery, media, reposts, AP read surfaces, and runtime metrics.
+- Live E2E uses real Bluesky + GtS through a Cloudflare tunnel and covers discovery, follow, resolver actor/post targets, unfollowed post import, threaded delivery, media, labeled media CW/sensitivity, reposts, AP read surfaces, and runtime metrics.
 
 ## Verification
 
@@ -58,8 +58,8 @@ Live verification:
 - `RUN_LIVE_E2E=1 npm run e2e:live:ci`
 
 Last live verification on 2026-05-08:
-- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS through `https://taxation-edmonton-southern-nasa.trycloudflare.com`.
-- Confirmed served actor `type: "Service"`, remote GtS account API `bot: true`, and original Bluesky profile/post URLs exposed through GtS while AP URI fetch/import still works.
+- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS through `https://love-helped-privileges-thickness.trycloudflare.com`.
+- Confirmed served actor `type: "Service"`, remote GtS account API `bot: true`, original Bluesky profile/post URLs exposed through GtS while AP URI fetch/import still works, and labeled media maps to AP/GtS reason-only CW plus sensitive media state.
 
 Do not mark live federation work complete unless the live harness passes or the failure is intentionally documented with artifacts.
 

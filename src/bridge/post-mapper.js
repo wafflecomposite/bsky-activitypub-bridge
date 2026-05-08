@@ -7,6 +7,20 @@ import { blueskyPostUrl } from "../bsky/web-url.js";
 
 const PUBLIC_AUDIENCE = "https://www.w3.org/ns/activitystreams#Public";
 const DEFAULT_VISIBILITY = "unlisted";
+const LABEL_DISPLAY_NAMES = new Map([
+  ["porn", "Adult Content"],
+  ["adult", "Adult Content"],
+  ["nsfw", "Adult Content"],
+  ["sexual", "Sexually Suggestive"],
+  ["suggestive", "Sexually Suggestive"],
+  ["graphic-media", "Graphic Media"],
+  ["gore", "Graphic Media"],
+  ["nudity", "Non-sexual Nudity"],
+  ["!warn", "Content Warning"],
+  ["!hide", "Hidden by Moderation"]
+]);
+const NON_CONTENT_WARNING_LABELS = new Set(["!no-unauthenticated", "bot"]);
+const MEDIA_ATTACHMENT_TYPES = new Set(["Audio", "Document", "Image", "Video"]);
 
 export function mapBskyPostToActivityPub({
   baseUrl,
@@ -78,10 +92,11 @@ export function mapBskyPostToActivityPub({
     }
   }
 
-  const labelValues = extractLabelValues(record.labels);
-  if (labelValues.length > 0) {
+  const warningLabels = extractContentWarningLabels(record.labels);
+  if (warningLabels.length > 0) {
     note.sensitive = true;
-    note.summary = `Content warning: ${labelValues.join(", ")}`;
+    note.summary = warningLabels.map((label) => label.name).join(", ");
+    markSensitiveMediaAttachments(note.attachment);
   }
 
   const create = {
@@ -492,14 +507,64 @@ export function parseAtPostUri(uri) {
   };
 }
 
-function extractLabelValues(labels) {
-  if (!Array.isArray(labels)) {
-    return [];
+function extractContentWarningLabels(labels) {
+  const seen = new Set();
+  const warnings = [];
+
+  for (const label of normalizeLabelEntries(labels)) {
+    const value = typeof label?.val === "string" ? label.val.trim() : "";
+    if (!value || label?.neg === true || NON_CONTENT_WARNING_LABELS.has(value)) {
+      continue;
+    }
+
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+
+    warnings.push({
+      value,
+      name: LABEL_DISPLAY_NAMES.get(key) ?? humanizeLabelValue(value)
+    });
   }
 
-  return labels
-    .map((label) => label?.val)
-    .filter((value) => typeof value === "string" && value.length > 0);
+  return warnings;
+}
+
+function normalizeLabelEntries(labels) {
+  if (Array.isArray(labels)) {
+    return labels;
+  }
+
+  if (Array.isArray(labels?.values)) {
+    return labels.values;
+  }
+
+  return [];
+}
+
+function markSensitiveMediaAttachments(attachments) {
+  if (!Array.isArray(attachments)) {
+    return;
+  }
+
+  for (const attachment of attachments) {
+    if (attachment && MEDIA_ATTACHMENT_TYPES.has(attachment.type)) {
+      attachment.sensitive = true;
+    }
+  }
+}
+
+function humanizeLabelValue(value) {
+  const cleaned = value.replace(/^!+/, "");
+  const words = cleaned
+    .split(/[-_\s]+/)
+    .map((word) => word.trim())
+    .filter(Boolean)
+    .map((word) => `${word[0].toUpperCase()}${word.slice(1)}`);
+
+  return words.length > 0 ? words.join(" ") : value;
 }
 
 function validateRecord(record) {

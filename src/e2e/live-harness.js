@@ -9,6 +9,8 @@ import { blueskyPostUrl, blueskyProfileUrl } from "../bsky/web-url.js";
 
 const DEFAULT_DID = "did:plc:ct7l6fgjtseazmaunhzrbydz";
 const DEFAULT_UNFOLLOWED_POST_URL = "https://bsky.app/profile/did:plc:22tkvmk7w562u3vueqeufkoa/post/3mgapjtxh5k2p";
+const LIVE_E2E_CONTENT_LABEL = "graphic-media";
+const LIVE_E2E_CONTENT_WARNING = "Graphic Media";
 
 export async function runLiveE2EHarness({
   credentials = null,
@@ -219,6 +221,36 @@ export async function runLiveE2EHarness({
       timeoutMs: 90_000,
       log
     });
+
+    const postedLabeledMedia = await createBlueskyImagePost({
+      identifier: resolvedCredentials.blueskyIdentifier,
+      appPassword: resolvedCredentials.blueskyAppPassword,
+      textPrefix: "Bridge automated live e2e labeled media",
+      imagePath: mediaFixturePath,
+      labels: [{ val: LIVE_E2E_CONTENT_LABEL }]
+    });
+
+    const timelineLabeledMedia = await waitForTimelineMediaPost({
+      instanceUrl: resolvedCredentials.gtsInstanceUrl,
+      accessToken: resolvedCredentials.gtsAccessToken,
+      marker: postedLabeledMedia.marker,
+      timeoutMs: 180_000,
+      expectedSensitive: true,
+      expectedSpoilerText: LIVE_E2E_CONTENT_WARNING,
+      log
+    });
+
+    const labeledMediaRkey = extractPostRkeyFromAtUri(postedLabeledMedia.uri);
+    const bridgeLabeledMediaObject = await waitForBridgeMediaObject({
+      localBaseUrl,
+      did,
+      rkey: labeledMediaRkey,
+      marker: postedLabeledMedia.marker,
+      timeoutMs: 90_000,
+      expectedSensitive: true,
+      expectedSummary: LIVE_E2E_CONTENT_WARNING,
+      log
+    });
     const postedRepost = await createBlueskyRepost({
       identifier: resolvedCredentials.blueskyIdentifier,
       appPassword: resolvedCredentials.blueskyAppPassword,
@@ -264,6 +296,13 @@ export async function runLiveE2EHarness({
         && bridgeReadSurface.ok === true
         && timelineMedia.hasMediaAttachment === true
         && bridgeMediaObject.hasAttachment === true
+        && timelineLabeledMedia.hasMediaAttachment === true
+        && timelineLabeledMedia.sensitive === true
+        && timelineLabeledMedia.spoilerText === LIVE_E2E_CONTENT_WARNING
+        && bridgeLabeledMediaObject.hasAttachment === true
+        && bridgeLabeledMediaObject.noteSensitive === true
+        && bridgeLabeledMediaObject.attachmentSensitive === true
+        && bridgeLabeledMediaObject.summary === LIVE_E2E_CONTENT_WARNING
         && bridgeRepost.found === true
         && (runtimeMetrics?.delivery?.delivered ?? 0) >= 3,
       tunnelUrl,
@@ -287,6 +326,9 @@ export async function runLiveE2EHarness({
       postedMedia,
       timelineMedia,
       bridgeMediaObject,
+      postedLabeledMedia,
+      timelineLabeledMedia,
+      bridgeLabeledMediaObject,
       postedRepost,
       bridgeRepost,
       runtimeMetrics
@@ -763,7 +805,7 @@ async function createBlueskyPostRecord({ session, text, reply = null, recordExtr
   return createResponse.json();
 }
 
-async function createBlueskyImagePost({ identifier, appPassword, textPrefix, imagePath }) {
+async function createBlueskyImagePost({ identifier, appPassword, textPrefix, imagePath, labels = null }) {
   if (!imagePath) {
     throw new Error("imagePath is required for media post");
   }
@@ -795,6 +837,14 @@ async function createBlueskyImagePost({ identifier, appPassword, textPrefix, ima
     session,
     text: marker,
     recordExtra: {
+      ...(Array.isArray(labels) && labels.length > 0
+        ? {
+            labels: {
+              $type: "com.atproto.label.defs#selfLabels",
+              values: labels
+            }
+          }
+        : {}),
       embed: {
         $type: "app.bsky.embed.images",
         images: [{
@@ -934,12 +984,22 @@ async function waitForTimelineThread({ instanceUrl, accessToken, rootMarker, rep
   };
 }
 
-async function waitForTimelineMediaPost({ instanceUrl, accessToken, marker, timeoutMs, log }) {
+async function waitForTimelineMediaPost({
+  instanceUrl,
+  accessToken,
+  marker,
+  timeoutMs,
+  log,
+  expectedSensitive = null,
+  expectedSpoilerText = null
+}) {
   const startedAt = Date.now();
   let last = {
     found: false,
     hasMediaAttachment: false,
-    statusId: null
+    statusId: null,
+    sensitive: null,
+    spoilerText: null
   };
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -954,19 +1014,27 @@ async function waitForTimelineMediaPost({ instanceUrl, accessToken, marker, time
       const list = Array.isArray(statuses) ? statuses : [];
       const status = list.find((entry) => statusContainsMarker(entry, marker)) ?? null;
       const hasMediaAttachment = Array.isArray(status?.media_attachments) && status.media_attachments.length > 0;
+      const sensitive = typeof status?.sensitive === "boolean" ? status.sensitive : null;
+      const spoilerText = typeof status?.spoiler_text === "string" ? status.spoiler_text : "";
+      const sensitiveMatches = expectedSensitive === null || sensitive === expectedSensitive;
+      const spoilerMatches = expectedSpoilerText === null || spoilerText === expectedSpoilerText;
 
       last = {
         found: status !== null,
         hasMediaAttachment,
-        statusId: status?.id ?? null
+        statusId: status?.id ?? null,
+        sensitive,
+        spoilerText
       };
 
-      if (last.found && last.hasMediaAttachment) {
+      if (last.found && last.hasMediaAttachment && sensitiveMatches && spoilerMatches) {
         return last;
       }
 
       if (last.found && !last.hasMediaAttachment) {
         log("timeline media post found but media attachments missing yet; waiting...");
+      } else if (last.found && (!sensitiveMatches || !spoilerMatches)) {
+        log(`timeline media labels waiting; sensitive=${String(sensitive)} spoiler=${JSON.stringify(spoilerText)}`);
       }
     } catch (error) {
       log(`timeline media retry error=${error instanceof Error ? error.message : String(error)}`);
@@ -1149,12 +1217,24 @@ async function waitForBridgeThreadReadSurface({
   return { ok: false, ...last };
 }
 
-async function waitForBridgeMediaObject({ localBaseUrl, did, rkey, marker, timeoutMs, log }) {
+async function waitForBridgeMediaObject({
+  localBaseUrl,
+  did,
+  rkey,
+  marker,
+  timeoutMs,
+  log,
+  expectedSensitive = null,
+  expectedSummary = null
+}) {
   const startedAt = Date.now();
   let last = {
     found: false,
     hasAttachment: false,
-    mediaUrl: null
+    mediaUrl: null,
+    noteSensitive: null,
+    attachmentSensitive: null,
+    summary: null
   };
 
   const objectUrl = `${localBaseUrl}/ap/object/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`;
@@ -1165,15 +1245,27 @@ async function waitForBridgeMediaObject({ localBaseUrl, did, rkey, marker, timeo
       const attachments = Array.isArray(body?.attachment) ? body.attachment : [];
       const mediaAttachment = attachments.find((entry) => typeof entry?.url === "string") ?? null;
       const content = typeof body?.content === "string" ? body.content : "";
+      const noteSensitive = typeof body?.sensitive === "boolean" ? body.sensitive : null;
+      const attachmentSensitive = typeof mediaAttachment?.sensitive === "boolean" ? mediaAttachment.sensitive : null;
+      const summary = typeof body?.summary === "string" ? body.summary : null;
+      const noteSensitiveMatches = expectedSensitive === null || noteSensitive === expectedSensitive;
+      const attachmentSensitiveMatches = expectedSensitive === null || attachmentSensitive === expectedSensitive;
+      const summaryMatches = expectedSummary === null || summary === expectedSummary;
 
       last = {
         found: response.ok && content.includes(marker),
         hasAttachment: mediaAttachment !== null,
-        mediaUrl: mediaAttachment?.url ?? null
+        mediaUrl: mediaAttachment?.url ?? null,
+        noteSensitive,
+        attachmentSensitive,
+        summary
       };
 
-      if (last.found && last.hasAttachment) {
+      if (last.found && last.hasAttachment && noteSensitiveMatches && attachmentSensitiveMatches && summaryMatches) {
         return last;
+      }
+      if (last.found && last.hasAttachment) {
+        log(`bridge media labels waiting; noteSensitive=${String(noteSensitive)} attachmentSensitive=${String(attachmentSensitive)} summary=${JSON.stringify(summary)}`);
       }
     } catch (error) {
       log(`bridge media retry error=${error instanceof Error ? error.message : String(error)}`);

@@ -125,7 +125,73 @@ test("mapBskyPostToActivityPub maps reply and labels", () => {
 
   assert.equal(result.note.inReplyTo, "https://bsky.app/profile/did:plc:bob/post/xyz");
   assert.equal(result.note.sensitive, true);
-  assert.equal(result.note.summary, "Content warning: nsfw");
+  assert.equal(result.note.summary, "Adult Content");
+});
+
+test("mapBskyPostToActivityPub maps Bluesky adult labels to media sensitivity and CW names", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post4-labels",
+    record: {
+      text: "labeled image",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      labels: {
+        $type: "com.atproto.label.defs#selfLabels",
+        values: [
+          { val: "porn" },
+          { val: "sexual" },
+          { val: "graphic-media" },
+          { val: "nudity" }
+        ]
+      },
+      embed: {
+        $type: "app.bsky.embed.images",
+        images: [
+          {
+            alt: "labeled image",
+            image: {
+              $type: "blob",
+              ref: {
+                $link: "bafkreilabeled"
+              },
+              mimeType: "image/jpeg"
+            }
+          }
+        ]
+      }
+    }
+  });
+
+  assert.equal(result.note.sensitive, true);
+  assert.equal(
+    result.note.summary,
+    "Adult Content, Sexually Suggestive, Graphic Media, Non-sexual Nudity"
+  );
+  assert.equal(result.note.attachment[0].sensitive, true);
+});
+
+test("mapBskyPostToActivityPub preserves unknown warning labels and ignores negated/bot labels", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post4-custom-label",
+    record: {
+      text: "custom labeled post",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      labels: [
+        { val: "unsafe-media" },
+        { val: "unsafe-media" },
+        { val: "!no-unauthenticated" },
+        { val: "bot" },
+        { val: "graphic-media", neg: true }
+      ]
+    }
+  });
+
+  assert.equal(result.note.sensitive, true);
+  assert.equal(result.note.summary, "Unsafe Media");
+  assert.equal(result.note.attachment, undefined);
 });
 
 test("mapBskyPostToActivityPub maps self-thread replies to bridged object ids", () => {
@@ -271,4 +337,47 @@ test("mapBskyPostToActivityPub maps recordWithMedia embeds", () => {
     mediaType: "video/mp4",
     name: "bridge video"
   });
+});
+
+test("mapBskyPostToActivityPub only marks media attachments sensitive", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "post10",
+    record: {
+      text: "quote + sensitive media",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      labels: {
+        $type: "com.atproto.label.defs#selfLabels",
+        values: [{ val: "graphic-media" }]
+      },
+      embed: {
+        $type: "app.bsky.embed.recordWithMedia",
+        record: {
+          $type: "app.bsky.embed.record",
+          record: {
+            uri: "at://did:plc:bob/app.bsky.feed.post/root7"
+          }
+        },
+        media: {
+          $type: "app.bsky.embed.video",
+          alt: "sensitive video",
+          video: {
+            $type: "blob",
+            ref: {
+              $link: "bafkreisensitivevideo"
+            },
+            mimeType: "video/mp4"
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(result.note.sensitive, true);
+  assert.equal(result.note.summary, "Graphic Media");
+  assert.equal(result.note.attachment[0].type, "Link");
+  assert.equal(result.note.attachment[0].sensitive, undefined);
+  assert.equal(result.note.attachment[1].type, "Document");
+  assert.equal(result.note.attachment[1].sensitive, true);
 });

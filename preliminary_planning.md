@@ -58,7 +58,7 @@ Post:
 - Note `url` points to the original Bluesky web post; the bridge AP object ID remains the note `id`.
 - Text facets map to safe HTML and ActivityPub tags. Use UTF-8 byte ranges and drop overlapping facets.
 - Replies map to `inReplyTo`; root/thread continuity maps to ActivityPub `context` where possible.
-- Self-labels map to `sensitive: true` plus a content-warning `summary`.
+- Content labels/self-labels map to `sensitive: true` plus a reason-only content-warning `summary`; attached media also gets `sensitive: true`.
 - Images/video/external links/quotes/record-with-media map to ActivityPub attachments or links.
 - Deletes map to `Delete`; dereferencing a deleted cached object returns `Tombstone`.
 - Reposts map to `Announce`; repost deletes map to `Delete`.

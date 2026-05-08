@@ -29,7 +29,8 @@ export function createBridgeApplication({
   timers = globalThis,
   jetstream = {},
   delivery = {},
-  createServer = createBridgeServer
+  createServer = createBridgeServer,
+  followLogger = null
 } = {}) {
   const resolvedStore = store ?? (dataDir
     ? new FileBridgeStore({
@@ -76,7 +77,8 @@ export function createBridgeApplication({
     profileCacheMaxAgeMs,
     deliveryQueue: resolvedQueue,
     actorCache: resolvedActorCache,
-    inboxSignatureVerifier
+    inboxSignatureVerifier,
+    followLogger
   });
 
   let runtime = null;
@@ -95,7 +97,10 @@ export function createBridgeApplication({
       shardId,
       postVisibility,
       onTransportAttempt: delivery.onTransportAttempt ?? null,
-      onTransportResult: delivery.onTransportResult ?? null,
+      onTransportResult: wrapTransportResultLogger({
+        onTransportResult: delivery.onTransportResult ?? null,
+        followLogger
+      }),
       messageSignaturesEnabled: delivery.messageSignaturesEnabled ?? false
     });
 
@@ -176,6 +181,45 @@ export function createBridgeApplication({
     server,
     inboxSignatureVerifier
   };
+}
+
+function wrapTransportResultLogger({ onTransportResult, followLogger }) {
+  if (!onTransportResult && typeof followLogger !== "function") {
+    return null;
+  }
+
+  return (event) => {
+    if (event?.metadata?.operation === "follow-accept") {
+      logFollowDeliveryResult(followLogger, event);
+    }
+
+    if (onTransportResult) {
+      onTransportResult(event);
+    }
+  };
+}
+
+function logFollowDeliveryResult(followLogger, event) {
+  if (typeof followLogger !== "function") {
+    return;
+  }
+
+  try {
+    followLogger({
+      at: new Date().toISOString(),
+      event: "follow.accept.delivery",
+      did: event.metadata?.did ?? null,
+      destination: event.destination ?? null,
+      status: event.status ?? null,
+      durationMs: event.durationMs ?? null,
+      attempt: event.metadata?.attempt ?? null,
+      ok: typeof event.status === "number" && event.status >= 200 && event.status < 300,
+      error: event.error ?? null,
+      responseBody: event.responseBody ?? null
+    });
+  } catch {
+    // Diagnostics must never affect delivery.
+  }
 }
 
 async function flushIfSupported(component) {

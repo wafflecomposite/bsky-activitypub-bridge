@@ -12,6 +12,11 @@ const app = createBridgeApplication({
   postVisibility: process.env.BRIDGE_POST_VISIBILITY ?? "unlisted",
   profileCacheMaxAgeMs: parseInteger(process.env.PROFILE_CACHE_MAX_AGE_MS, 60_000),
   signatureMaxAgeSeconds: parseInteger(process.env.INBOX_SIGNATURE_MAX_AGE_SECONDS, 300),
+  followLogger: parseBoolean(process.env.FOLLOW_DEBUG_LOGS, true)
+    ? (event) => {
+        console.info(`[bridge-follow] ${JSON.stringify(event)}`);
+      }
+    : null,
   jetstream: {
     enabled: parseBoolean(process.env.ENABLE_JETSTREAM, false),
     url: process.env.JETSTREAM_URL,

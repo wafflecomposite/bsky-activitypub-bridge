@@ -106,6 +106,7 @@ npm start
 - `trycloudflare` URL changes every run; restart the bridge with the new `BASE_URL`.
 - GtS discovery for fresh actors can take minutes. Use `/api/v2/search?q=<full-acct>&resolve=true&limit=40&type=accounts&offset=0`.
 - Follow state may sit at `requested`; poll `/api/v1/accounts/relationships` and inspect bridge inbox/delivery logs.
+- Bridge follow diagnostics are emitted by `npm start` as `[bridge-follow] {...}` JSON lines by default. Set `FOLLOW_DEBUG_LOGS=0` to disable them after debugging.
 - Keep `DATA_DIR` stable during a run so actor signing keys survive restarts.
 - Existing remote account cache entries may keep an old actor type. If a bridged profile was discovered before the bridge emitted ActivityStreams `Service`, force a remote refresh or use a fresh bridge domain before judging the bot flag.
 - If Jetstream is off during the posting phase, Bluesky posts will not deliver.

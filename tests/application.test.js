@@ -65,3 +65,60 @@ test("createBridgeApplication flushes async file stores on stop", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("createBridgeApplication logs follow Accept delivery results", async () => {
+  const followEvents = [];
+  const app = createBridgeApplication({
+    baseUrl: "https://bridge.example",
+    followLogger: (event) => followEvents.push(event),
+    fetchImpl: async () => ({ status: 202 }),
+    createServer: () => ({
+      start: async () => ({
+        host: "127.0.0.1",
+        port: 0,
+        baseUrl: "https://bridge.example"
+      }),
+      stop: async () => {}
+    }),
+    delivery: {
+      drainIntervalMs: 0
+    }
+  });
+
+  app.store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social"
+  });
+  app.keyManager.ensureKeyPair("did:plc:alice");
+  app.queue.enqueue({
+    did: "did:plc:alice",
+    destination: "https://remote.example/inbox",
+    recipientActorIds: ["https://remote.example/users/bob"],
+    operation: "follow-accept",
+    activity: {
+      "@context": "https://www.w3.org/ns/activitystreams",
+      id: "https://bridge.example/ap/actor/did%3Aplc%3Aalice/activities/accept/test",
+      type: "Accept",
+      actor: "https://bridge.example/ap/actor/did%3Aplc%3Aalice",
+      object: {
+        type: "Follow",
+        actor: "https://remote.example/users/bob",
+        object: "https://bridge.example/ap/actor/did%3Aplc%3Aalice"
+      }
+    }
+  });
+
+  try {
+    await app.start({ port: 0 });
+    const drain = await app.getRuntime().drainDeliveries({ max: 1 });
+    assert.equal(drain[0].status, "delivered");
+  } finally {
+    await app.stop();
+  }
+
+  const deliveryEvent = followEvents.find((event) => event.event === "follow.accept.delivery");
+  assert.equal(deliveryEvent?.did, "did:plc:alice");
+  assert.equal(deliveryEvent?.destination, "https://remote.example/inbox");
+  assert.equal(deliveryEvent?.status, 202);
+  assert.equal(deliveryEvent?.ok, true);
+});

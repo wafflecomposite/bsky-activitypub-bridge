@@ -46,7 +46,8 @@ export function createBridgeServer({
   deliveryQueue = null,
   actorCache = null,
   inboxSignatureVerifier = null,
-  profileCacheMaxAgeMs = 60_000
+  profileCacheMaxAgeMs = 60_000,
+  followLogger = null
 } = {}) {
   let publicBaseUrl = baseUrl;
 
@@ -68,7 +69,8 @@ export function createBridgeServer({
         deliveryQueue,
         actorCache,
         inboxSignatureVerifier,
-        profileCacheMaxAgeMs
+        profileCacheMaxAgeMs,
+        followLogger
       });
 
       sendJsonResponse(res, response);
@@ -148,7 +150,8 @@ export async function dispatchBridgeRequest({
   deliveryQueue = null,
   actorCache = null,
   inboxSignatureVerifier = null,
-  profileCacheMaxAgeMs = 60_000
+  profileCacheMaxAgeMs = 60_000,
+  followLogger = null
 }) {
   if (!baseUrl) {
     throw new Error("Public base URL is not configured");
@@ -210,7 +213,7 @@ export async function dispatchBridgeRequest({
   }
 
   if (method === "POST" && url.pathname.startsWith("/ap/actor/") && url.pathname.endsWith("/inbox")) {
-    return handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier });
+    return handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier, followLogger });
   }
 
   return {
@@ -1089,12 +1092,17 @@ function renderDiscoveryExample(example) {
   return `<a href="${escapeHtml(href)}"><code>${escapeHtml(example.label)}</code></a>`;
 }
 
-async function handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier }) {
+async function handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier, followLogger }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length, -"/inbox".length);
     did = decodeDidFromPath(didPath);
   } catch (error) {
+    logFollowEvent(followLogger, {
+      event: "inbox.decode_failed",
+      path: url.pathname,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return {
       status: 400,
       contentType: "application/json",
@@ -1103,6 +1111,11 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
   }
 
   if (!store.getActorByDid(did)) {
+    logFollowEvent(followLogger, {
+      event: "inbox.actor_missing",
+      did,
+      path: url.pathname
+    });
     return {
       status: 404,
       contentType: "application/json",
@@ -1111,6 +1124,11 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
   }
 
   if (inboxSignatureVerifier) {
+    logFollowEvent(followLogger, {
+      event: "inbox.signature.start",
+      did,
+      path: url.pathname
+    });
     let verification;
     try {
       verification = await runInboxSignatureVerifier({
@@ -1121,6 +1139,12 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
         body: bodyText
       });
     } catch (error) {
+      logFollowEvent(followLogger, {
+        event: "inbox.signature.error",
+        did,
+        path: url.pathname,
+        error: error instanceof Error ? error.message : String(error)
+      });
       return {
         status: 401,
         contentType: "application/json",
@@ -1129,18 +1153,37 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
     }
 
     if (!verification.ok) {
+      logFollowEvent(followLogger, {
+        event: "inbox.signature.failed",
+        did,
+        path: url.pathname,
+        error: verification.error ?? "Signature verification failed"
+      });
       return {
         status: 401,
         contentType: "application/json",
         body: { error: verification.error ?? "Signature verification failed" }
       };
     }
+
+    logFollowEvent(followLogger, {
+      event: "inbox.signature.ok",
+      did,
+      path: url.pathname
+    });
   }
 
   let activity;
   try {
     activity = parseJsonBody(bodyText);
   } catch (error) {
+    logFollowEvent(followLogger, {
+      event: "inbox.parse_failed",
+      did,
+      path: url.pathname,
+      bodyLength: bodyText.length,
+      error: error instanceof Error ? error.message : String(error)
+    });
     return {
       status: 400,
       contentType: "application/json",
@@ -1148,10 +1191,22 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
     };
   }
 
+  logFollowEvent(followLogger, {
+    event: "inbox.activity",
+    did,
+    path: url.pathname,
+    activity: summarizeInboxActivity(activity)
+  });
+
   let result;
   try {
     let resolvedFollower = null;
     if (activity.type === "Follow") {
+      logFollowEvent(followLogger, {
+        event: "follow.resolve.start",
+        did,
+        activity: summarizeInboxActivity(activity)
+      });
       resolvedFollower = await resolveFollowerEndpoints({
         activity,
         targetDid: did,
@@ -1159,6 +1214,14 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
         keyManager,
         fetchImpl,
         actorCache
+      });
+      logFollowEvent(followLogger, {
+        event: "follow.resolve.ok",
+        did,
+        actorId: resolvedFollower.actorId,
+        inboxUrl: resolvedFollower.inboxUrl,
+        sharedInboxUrl: resolvedFollower.sharedInboxUrl,
+        source: resolvedFollower.source ?? "unknown"
       });
     }
 
@@ -1172,12 +1235,29 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
       store
     });
   } catch (error) {
+    logFollowEvent(followLogger, {
+      event: "inbox.process_failed",
+      did,
+      activity: summarizeInboxActivity(activity),
+      error: error instanceof Error ? error.message : String(error)
+    });
     return {
       status: 400,
       contentType: "application/json",
       body: { error: error.message }
     };
   }
+
+  logFollowEvent(followLogger, {
+    event: "inbox.processed",
+    did,
+    activity: summarizeInboxActivity(activity),
+    status: result.status,
+    resultStatus: result.body?.status ?? null,
+    followerActorId: result.body?.follower?.actorId ?? result.body?.actorId ?? null,
+    followerInboxUrl: result.body?.follower?.inboxUrl ?? null,
+    removed: typeof result.body?.removed === "boolean" ? result.body.removed : null
+  });
 
   if (result.status === 202 && deliveryQueue && result.body.follower?.inboxUrl && result.body.accept) {
     deliveryQueue.enqueue({
@@ -1187,6 +1267,22 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
       operation: "follow-accept",
       activity: result.body.accept
     });
+    logFollowEvent(followLogger, {
+      event: "follow.accept.enqueued",
+      did,
+      followerActorId: result.body.follower.actorId,
+      destination: result.body.follower.inboxUrl,
+      acceptId: result.body.accept.id ?? null
+    });
+  } else if (activity.type === "Follow") {
+    logFollowEvent(followLogger, {
+      event: "follow.accept.not_enqueued",
+      did,
+      status: result.status,
+      reason: deliveryQueue
+        ? (result.body?.follower?.inboxUrl ? "missing-accept" : "missing-inbox")
+        : "missing-delivery-queue"
+    });
   }
 
   return {
@@ -1194,6 +1290,54 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
     contentType: "application/activity+json",
     body: result.body
   };
+}
+
+function logFollowEvent(followLogger, event) {
+  if (typeof followLogger !== "function") {
+    return;
+  }
+
+  try {
+    followLogger({
+      at: new Date().toISOString(),
+      ...event
+    });
+  } catch {
+    // Diagnostics must never affect federation handling.
+  }
+}
+
+function summarizeInboxActivity(activity) {
+  if (!activity || typeof activity !== "object") {
+    return null;
+  }
+
+  const summary = {
+    id: typeof activity.id === "string" ? activity.id : null,
+    type: typeof activity.type === "string" ? activity.type : null,
+    actor: summarizeActivityReference(activity.actor),
+    object: summarizeActivityReference(activity.object)
+  };
+
+  if (activity.object && typeof activity.object === "object") {
+    summary.objectType = typeof activity.object.type === "string" ? activity.object.type : null;
+    summary.objectActor = summarizeActivityReference(activity.object.actor);
+    summary.objectObject = summarizeActivityReference(activity.object.object);
+  }
+
+  return summary;
+}
+
+function summarizeActivityReference(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value && typeof value === "object" && typeof value.id === "string") {
+    return value.id;
+  }
+
+  return null;
 }
 
 async function runInboxSignatureVerifier({ inboxSignatureVerifier, method, requestTarget, headers, body }) {

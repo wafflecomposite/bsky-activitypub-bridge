@@ -116,6 +116,7 @@ test("dispatchBridgeRequest accepts Undo Follow and removes follower", async () 
   const store = new InMemoryBridgeStore();
   const keyManager = new InMemoryKeyManager();
   const deliveryQueue = new InMemoryDeliveryQueue();
+  const followEvents = [];
 
   store.upsertActor({
     did: "did:plc:alice",
@@ -144,7 +145,8 @@ test("dispatchBridgeRequest accepts Undo Follow and removes follower", async () 
     store,
     keyManager,
     baseUrl,
-    deliveryQueue
+    deliveryQueue,
+    followLogger: (event) => followEvents.push(event)
   });
 
   assert.equal(undoRes.status, 202);
@@ -152,6 +154,8 @@ test("dispatchBridgeRequest accepts Undo Follow and removes follower", async () 
   assert.equal(undoRes.body.removed, true);
   assert.equal(store.listFollowers("did:plc:alice").length, 0);
   assert.equal(deliveryQueue.size(), 0);
+  assert.equal(followEvents.some((event) => event.event === "inbox.activity" && event.activity?.type === "Undo"), true);
+  assert.equal(followEvents.some((event) => event.event === "inbox.processed" && event.resultStatus === "undone" && event.removed === true), true);
 });
 
 test("dispatchBridgeRequest redirects browser actor requests to Bluesky profile", async () => {
@@ -874,6 +878,7 @@ test("dispatchBridgeRequest resolves remote actor and queues Accept delivery", a
   const store = new InMemoryBridgeStore();
   const keyManager = new InMemoryKeyManager();
   const deliveryQueue = new InMemoryDeliveryQueue();
+  const followEvents = [];
 
   store.upsertActor({
     did: "did:plc:alice",
@@ -896,6 +901,7 @@ test("dispatchBridgeRequest resolves remote actor and queues Accept delivery", a
     keyManager,
     baseUrl,
     deliveryQueue,
+    followLogger: (event) => followEvents.push(event),
     fetchImpl: async (url, init) => {
       actorFetchCalls += 1;
       assert.equal(url, "https://remote.example/users/bob");
@@ -921,6 +927,10 @@ test("dispatchBridgeRequest resolves remote actor and queues Accept delivery", a
   assert.equal(queued.operation, "follow-accept");
   assert.equal(queued.destination, "https://remote.example/users/bob/inbox");
   assert.equal(queued.activity.type, "Accept");
+  assert.equal(followEvents.some((event) => event.event === "inbox.activity" && event.activity?.type === "Follow"), true);
+  assert.equal(followEvents.some((event) => event.event === "follow.resolve.ok" && event.source === "fetch"), true);
+  assert.equal(followEvents.some((event) => event.event === "inbox.processed" && event.resultStatus === "accepted"), true);
+  assert.equal(followEvents.some((event) => event.event === "follow.accept.enqueued" && event.destination === "https://remote.example/users/bob/inbox"), true);
 });
 
 test("dispatchBridgeRequest reuses remote actor cache across follows", async () => {

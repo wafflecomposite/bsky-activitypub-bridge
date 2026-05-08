@@ -27,6 +27,7 @@ test("resolveFollowerEndpoints uses embedded actor inbox when present", async ()
   assert.equal(result.actorId, "https://remote.example/users/bob");
   assert.equal(result.inboxUrl, "https://remote.example/users/bob/inbox");
   assert.equal(result.sharedInboxUrl, "https://remote.example/inbox");
+  assert.equal(result.source, "embedded");
 });
 
 test("resolveFollowerEndpoints uses actor cache for repeated lookups", async () => {
@@ -75,6 +76,8 @@ test("resolveFollowerEndpoints uses actor cache for repeated lookups", async () 
 
   assert.equal(fetchCount, 1);
   assert.equal(first.inboxUrl, second.inboxUrl);
+  assert.equal(first.source, "fetch");
+  assert.equal(second.source, "cache");
 });
 
 test("resolveFollowerEndpoints fetches actor when activity only has actor ID", async () => {
@@ -109,4 +112,5 @@ test("resolveFollowerEndpoints fetches actor when activity only has actor ID", a
   assert.ok(request.init.headers.signature);
   assert.equal(result.inboxUrl, "https://remote.example/users/bob/inbox");
   assert.equal(result.sharedInboxUrl, "https://remote.example/inbox");
+  assert.equal(result.source, "fetch");
 });

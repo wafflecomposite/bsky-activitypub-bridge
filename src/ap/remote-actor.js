@@ -15,7 +15,8 @@ export async function resolveFollowerEndpoints({ activity, targetDid, baseUrl, k
     return {
       actorId: actorRef,
       inboxUrl: embeddedInbox,
-      sharedInboxUrl: embeddedSharedInbox
+      sharedInboxUrl: embeddedSharedInbox,
+      source: "embedded"
     };
   }
 
@@ -24,7 +25,8 @@ export async function resolveFollowerEndpoints({ activity, targetDid, baseUrl, k
     return {
       actorId: actorRef,
       inboxUrl: cached.inboxUrl,
-      sharedInboxUrl: cached.sharedInboxUrl ?? null
+      sharedInboxUrl: cached.sharedInboxUrl ?? null,
+      source: "cache"
     };
   }
 
@@ -41,7 +43,8 @@ export async function resolveFollowerEndpoints({ activity, targetDid, baseUrl, k
   return {
     actorId: actorRef,
     inboxUrl: remoteActor.inboxUrl,
-    sharedInboxUrl: remoteActor.sharedInboxUrl
+    sharedInboxUrl: remoteActor.sharedInboxUrl,
+    source: "fetch"
   };
 }
 

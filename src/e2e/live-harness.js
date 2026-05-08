@@ -99,6 +99,13 @@ export async function runLiveE2EHarness({
       timeoutMs: 180_000,
       log
     });
+    const remoteAccountProfile = await waitForRemoteAccountBotProfile({
+      instanceUrl: resolvedCredentials.gtsInstanceUrl,
+      accessToken: resolvedCredentials.gtsAccessToken,
+      accountId: discovered.id,
+      timeoutMs: 60_000,
+      log
+    });
 
     const followState = await followAndWait({
       instanceUrl: resolvedCredentials.gtsInstanceUrl,
@@ -230,7 +237,9 @@ export async function runLiveE2EHarness({
 
     const summary = {
       ok: followState.following === true
+        && bridgeActorProfile.serviceActor === true
         && bridgeActorProfile.bot === true
+        && remoteAccountProfile.bot === true
         && bridgeActorProfile.featuredCollection === true
         && bridgeActorProfile.summaryHasBridgeNotice === true
         && bridgeActorProfile.avatarMatches === true
@@ -252,6 +261,7 @@ export async function runLiveE2EHarness({
       remoteAcct,
       did,
       discovered,
+      remoteAccountProfile,
       followState,
       bridgeActorProfile,
       resolverActor,
@@ -482,7 +492,9 @@ async function verifyBridgeActorProfile({ tunnelUrl, port, did, blueskyIdentifie
     : true;
 
   return {
+    serviceActor: actor?.type === "Service",
     bot: actor?.bot === true,
+    actorType: actor?.type ?? null,
     featuredCollection: featured?.type === "OrderedCollection",
     summaryHasBridgeNotice: String(actor?.summary ?? "").includes(`Bridged by ${tunnelUrl}`),
     avatarMatches,
@@ -594,7 +606,8 @@ async function discoverRemoteAccountWithRetry({ instanceUrl, accessToken, remote
         return {
           id: match.id,
           acct: match.acct,
-          url: match.url
+          url: match.url,
+          bot: match.bot === true
         };
       }
     } catch (error) {
@@ -605,6 +618,48 @@ async function discoverRemoteAccountWithRetry({ instanceUrl, accessToken, remote
   }
 
   throw new Error(`Unable to discover remote account within timeout: ${remoteAcct}`);
+}
+
+async function waitForRemoteAccountBotProfile({ instanceUrl, accessToken, accountId, timeoutMs, log }) {
+  const startedAt = Date.now();
+  let last = {
+    id: accountId,
+    acct: null,
+    url: null,
+    bot: false,
+    rawBot: null
+  };
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const account = await gtsApi({
+        instanceUrl,
+        accessToken,
+        path: `/api/v1/accounts/${encodeURIComponent(accountId)}`,
+        timeoutMs: 30_000
+      });
+
+      last = {
+        id: account?.id ?? accountId,
+        acct: account?.acct ?? null,
+        url: account?.url ?? null,
+        bot: account?.bot === true,
+        rawBot: account?.bot ?? null
+      };
+
+      if (last.bot) {
+        return last;
+      }
+
+      log(`remote account bot flag not visible yet; bot=${String(last.rawBot)}`);
+    } catch (error) {
+      log(`remote-account-bot retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(2_000);
+  }
+
+  return last;
 }
 
 async function followAndWait({ instanceUrl, accessToken, accountId, timeoutMs, log }) {

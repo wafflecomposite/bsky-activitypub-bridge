@@ -1,214 +1,91 @@
 # Planning and Progress
 
+Keep this file current and compact. Historical implementation detail belongs in git history, not here.
+
 ## Current Goal
-Stabilize production-like behavior: strict ingest scoping, reliable follow acceptance/delivery, accurate AP-facing stats/metadata, and minimal end-user discovery UX.
 
-## Completed
-- Initialized a runnable Node.js project with zero external runtime dependencies.
-- Implemented deterministic identity and URL mapping primitives:
-  - acct URI parsing/validation
-  - handle and DID validation
-  - stable actor/object/followers/outbox URL builders
-- Implemented ActivityPub-facing primitives:
-  - actor document generation (`Person` + public key material)
-  - WebFinger JRD generation
-  - inbox `Follow` handling with idempotent follower storage
-  - `Accept` activity generation
-- Implemented HTTP endpoint dispatch for MVP surface:
-  - `GET /.well-known/webfinger`
-  - `GET /ap/actor/{did}`
-  - `POST /ap/actor/{did}/inbox`
-- Implemented Bluesky post mapping core:
-  - `app.bsky.feed.post` -> ActivityPub `Note` + `Create`
-  - UTF-8 byte-range facet rendering (mentions, links, hashtags)
-  - overlap-safe facet handling
-  - reply linkage conversion (`at://` parent -> web fallback URL)
-  - self-label to content warning mapping (`sensitive` + `summary`)
-- Implemented ingestion/fanout pipeline primitives:
-  - delivery target planner (shared inbox grouping + inbox fallback)
-  - Jetstream commit processor for post create/update/delete
-  - outbound delivery queue interface
-- Implemented outbound delivery mechanics:
-  - HTTP `Digest` generation
-  - draft-cavage-style HTTP Signature header generation for POST inbox delivery
-  - signed GET header generation for remote actor discovery
-  - delivery worker with success, permanent-failure, retry scheduling, and capped exponential backoff
-- Implemented runtime orchestration and Jetstream lifecycle:
-  - runtime ingest/queue/delivery drain loop
-  - Jetstream start/stop/update hooks
-  - configurable Jetstream URL/reconnect/rewind
-  - auto-refresh of `wantedDids` from provider on interval
-- Implemented follow-path network hardening:
-  - signed GET actor fetch when follow payload only contains actor ID
-  - TTL-based remote actor cache with invalidation and expiry
-  - cache-aware follow endpoint resolution in inbox path
-  - queued outbound `Accept` delivery after follow acceptance
-- Implemented optional inbound inbox signature verification:
-  - digest validation
-  - date skew checks
-  - public key lookup from remote actor document via `keyId`
-  - RSA signature verification over signed header list
-  - server-side 401 rejection on verification failure
-- Implemented file-backed durability components:
-  - file-backed bridge store (actors + followers)
-  - file-backed Jetstream cursor/dedup state
-  - file-backed outbound delivery queue
-  - restart recovery integration proving queued delivery replay and cursor continuity
-- Implemented local executable E2E harness:
-  - reusable harness module for simulated ingest/retry/delivery flow
-  - runnable script `npm run e2e:local`
-  - harness test asserting retry-then-deliver semantics and cursor continuity
-- Implemented startup/application wiring for deployment controls:
-  - `createBridgeApplication()` composition layer
-  - env-driven runtime/server configuration in `src/index.js`
-  - strict inbox signature mode toggle (`STRICT_INBOX_SIGNATURES`)
-  - data directory persistence toggle (`DATA_DIR`)
-- Prepared real-world tunnel test tooling:
-  - local `cloudflared` binary bootstrap for `trycloudflare`
-  - dedicated live runbook in `live_testing.md`
-  - machine-readable local secrets file support (`test_credentials.json`, gitignored)
-- Implemented outbound transport abstraction with observability hooks:
-  - `HttpDeliveryTransport` for signed delivery HTTP calls
-  - transport attempt/result callbacks for metrics/logging integration
-- Implemented automated live E2E harness:
-  - script: `npm run e2e:live`
-  - quick tunnel startup/shutdown orchestration
-  - two-phase bridge startup (discovery mode, then ingest mode)
-  - GtS remote discovery + follow state polling
-  - real Bluesky post publish + GtS home timeline assertion
-  - robust handling for transient tunnel/bootstrap fetch failures
-- Hardened live E2E reliability based on observed quirks:
-  - persistent key manager wired for data-dir runs to keep signing keys stable across restarts
-  - GtS search path standardized on `/api/v2/search` with full remote acct query
-  - follow call request formatting fixed (no JSON content-type on empty POST body)
-  - bridge post visibility defaulted to `unlisted` to avoid federated public feed noise
-- Expanded AP surface and coverage:
-  - actor followers and outbox collection endpoints
-  - additional tests for audience mapping, invalid/control event handling, transport error body capture, file key persistence, and live harness helpers
-- Implemented automatic actor materialization on WebFinger lookup:
-  - unknown `acct:` handles are resolved against Bluesky handle resolver
-  - actor records are created on successful DID resolution (no seed-only dependency)
-- Improved reply/thread fidelity for self-thread chains:
-  - self-replies now map `inReplyTo` to bridged object IDs
-  - reply root now maps into ActivityPub `context` for better thread continuity
-- Expanded reply/thread fidelity for cross-actor chains:
-  - non-self reply parent/root URIs now resolve to bridged object IDs when parent objects are cached
-  - falls back to Bluesky web URLs when bridged parent objects are not available
-- Documented media test fixtures:
-  - added `tests/data/README.md` describing available local image/video fixtures and usage guidance
-- Implemented cached read-surface for bridged posts:
-  - object/activity persistence in in-memory and file-backed stores
-  - `GET /ap/object/{did}/{rkey}` endpoint with tombstone response for deleted objects
-  - outbox endpoint now serves cached activities instead of static empty collection
-  - ingest path now persists mapped activities even when no followers are present
-- Extended automated live E2E coverage:
-  - validates threaded timeline delivery (`root` + `reply` linkage)
-  - validates bridge outbox/object read endpoints for same thread
-- Implemented media attachment mapping:
-  - maps Bluesky image/video blob embeds to ActivityPub `attachment` using public `com.atproto.sync.getBlob` URLs
-  - maps external/record/recordWithMedia embed variants into ActivityPub link/document attachments
-  - includes unit tests for image/video/recordWithMedia mapping
-- Extended live E2E with media verification:
-  - uploads local fixture `tests/data/example_image.jpg` to Bluesky and posts with image embed
-  - asserts GtS timeline receives media attachment
-  - asserts bridged object endpoint includes ActivityPub `attachment`
-- Implemented CI-friendly live E2E runner:
-  - new script `npm run e2e:live:ci` with explicit opt-in gate (`RUN_LIVE_E2E=1`)
-  - structured JSON output and persisted run summary/error artifacts
-  - artifact directory retention for failures (and optional cleanup for successful runs)
-  - helper module and tests for env parsing and artifact path resolution
-- Implemented runtime delivery health signals:
-  - `BridgeRuntime.getMetrics()` exposes queue depth, delivery counters, and last delivery result snapshot
-  - `createBridgeApplication().getMetrics()` exposes runtime metrics (or pre-start baseline)
-  - live E2E now asserts delivered count and includes runtime metrics in result artifacts
-- Added RFC9421-style outbound message signature support:
-  - new message-signature builder with `Content-Digest`, `Signature-Input`, and structured `Signature` fields
-  - optional dual-signing mode in delivery transport (legacy cavage signature + RFC9421 headers)
-  - runtime/env wiring (`ENABLE_HTTP_MESSAGE_SIGNATURES` and live harness toggle)
-  - unit tests plus successful live validation with message signatures enabled
-- Added unit and integration-style tests for all implemented behavior.
-- Implemented bridge discovery frontpage workflow:
-  - added minimal `GET /` resolver page with single “anything goes” input
-  - accepts common Bluesky actor/post identifiers and URL variants (handles, DIDs, acct-style, profile/post URLs, bridge object URLs, AT URIs)
-  - returns canonical bridge search targets (remote acct, actor URL, post URL)
-  - triggers actor/profile and post materialization on demand during resolution
-  - added machine-friendly resolver endpoint: `GET /api/resolve?q=...`
-- Completed bridged profile fidelity milestone:
-  - actor metadata fidelity (avatar/banner/description notice line + bot flag) with pinned-post featured collection support
-  - repost create/delete mapping to ActivityPub `Announce`/`Delete`
-  - quote post links and mention facets resolve to bridged ActivityPub object/actor URLs where resolvable
-  - actor freshness semantics hardened via `profileFetchedAt` to avoid seed records suppressing first profile hydration
-- Implemented ingest-scope safety guardrails:
-  - Jetstream client now requires non-empty wanted DID set by default and stays idle otherwise
-  - runtime wiring includes explicit unsafe override (`UNSAFE_ALLOW_UNFILTERED_JETSTREAM`) for intentional unfiltered mode only
-  - inbound Jetstream events are DID-filtered client-side before processor/storage writes
-  - runtime metrics now include active wanted DID count
-- Implemented non-blocking file persistence mode for runtime durability:
-  - file-backed store/state/queue support async debounced persistence with explicit `flush()`
-  - app shutdown now flushes async persistent components before stop
-  - data-dir application wiring defaults file-backed components to async persistence mode
-- Fixed AP collection surface for profile counters:
-  - added actor `following` property + `/ap/actor/{did}/following` endpoint
-  - outbox `totalItems` now reports total cached activities independent of pagination `limit`
-  - added in-memory/file store outbox count helpers
-- Simplified resolver frontpage UX:
-  - UI now returns one search target with one-click copy:
-    - actor input -> searchable fediverse account address
-    - post input -> bridge object URL for status import/search
-  - machine-readable JSON resolver endpoint remains available for automation
-- Fixed server request-body handling for proxy compatibility:
-  - GET/HEAD/OPTIONS requests no longer block on raw body reads before dispatch
-- Fixed on-demand post materialization for unfollowed/uncached actors:
-  - `GET /ap/object/{did}/{rkey}` no longer hard-fails when actor profile lookup is unavailable
-  - post discovery resolver now falls back to handle->DID resolution when profile fetch is unavailable
-  - added integration regressions for both failure modes
-- Expanded live E2E discovery/import coverage:
-  - verifies resolver contract for unfollowed post URLs
-  - verifies GtS `type=statuses` search can import resolved bridge post URL for unfollowed author
-  - hardened harness against local tunnel-host DNS flakiness by performing bridge read checks via loopback while preserving public URL checks for remote import
+Soft reboot the project around a stable baseline:
+- keep ingest strictly scoped
+- keep follow/discovery/import paths reliable against real ActivityPub servers
+- keep AP read surfaces accurate enough for federation consumers
+- preserve automated local and live tests as the source of truth
 
-## Verification Status
-- Test commands:
-  - `npm test`
-  - `npm run e2e:local`
-  - `npm run e2e:live`
-- Result:
-  - automated suite passing (30/30)
-  - local E2E harness succeeds
-  - live E2E harness succeeds end-to-end (`ok: true`) against real Bluesky + GtS with trycloudflare tunnel, including resolver actor/post contract, unfollowed post import, profile fidelity, replies/thread linkage, media propagation, repost propagation, and bridge read-surface checks
+## Current Baseline
 
-## Next Milestone
-Reliability and interoperability hardening:
-- Prevent accidental firehose ingest/storage in persistent mode.
-- Restore robust follow completion on GtS/Mastodon.
-- Fix AP profile counters/pinned-post surfacing and validate via tests/live checks.
+Runtime:
+- Node.js 22+ app with zero external runtime dependencies.
+- `createBridgeApplication()` wires server, runtime, store, key manager, Jetstream state, and delivery queue.
+- Env-driven startup in `src/index.js`; main scripts are `npm start`, `npm test`, `npm run e2e:local`, `npm run e2e:live`, and `npm run e2e:live:ci`.
 
-## TODO
-- Priority P0: ingest scope + persistence safety (critical)
-  - Add startup warning/error path when ingest is idle due missing wanted DID filters.
-  - Add regression test that persisted store does not grow with unrelated DIDs when wanted DID set is empty.
-- Priority P0: follow reliability across GtS/Mastodon
-  - Investigate and fix follow-request stalls (`requested` never transitions to `following`) in real-world runs.
-  - Validate inbound signature compatibility modes and defaults for follow ingestion.
-  - Add/extend live checks to assert full follow lifecycle completion and post delivery for both test instances.
-- Priority P0: AP actor stats/profile fidelity fixes
-  - Fix counters exposed to AP consumers:
-    - follower count (`followers.totalItems`) validation across live/manual scenarios
-    - following count (explicit `following` collection semantics for one-way bridge)
-    - posts/statuses count (outbox total independent from pagination limit)
-  - Verify/fix pinned-post surfacing through actor `featured` collection, including cache-miss retrieval.
-  - Add unit/integration coverage for counters and pinned-post behavior.
-- Priority P1: discovery parser hardening
-  - Expand resolver parsing for additional fediverse profile URL shapes beyond `/profile/...` and bridge-native AP URLs.
-- Priority P1: federation compatibility hardening
-  - Add inbound RFC9421 message-signature verification path alongside the current cavage verifier.
-- Priority P1: production durability/ops
-  - Move from JSON files to SQLite/Postgres.
-  - Add explicit operational alerting for sustained delivery failures / backlog growth.
+ActivityPub surface:
+- WebFinger, actor, inbox, followers, following, featured, outbox, object, root resolver page, and `/api/resolve`.
+- Follow inbox accepts and stores followers, resolves remote actor inboxes, queues signed `Accept` delivery, and can enforce inbound legacy HTTP signatures.
+- Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, public key material, counters/collections, and featured collection link.
+- Object/outbox endpoints serve cached or on-demand-materialized bridged posts; deleted objects return `Tombstone`.
+
+Bluesky side:
+- DID is canonical; handles are aliases.
+- Unknown handles can be resolved/materialized on WebFinger or resolver lookup.
+- Jetstream ingest supports scoped wanted DIDs/collections, cursor/dedup state, reconnect rewind, and client-side DID filtering.
+- Unfiltered Jetstream is blocked by default unless `UNSAFE_ALLOW_UNFILTERED_JETSTREAM` is set.
+- Post mapper covers text facets, links, mentions, hashtags, replies/thread context, self-label content warnings, media/external/record embeds, reposts, updates, and deletes.
+
+Delivery and durability:
+- Delivery planner groups by shared inbox with inbox fallback.
+- File-backed queue/store/state/key manager support restart recovery and debounced async persistence with explicit flush on shutdown.
+- Delivery worker records metrics, retries transient failures with capped exponential backoff, and treats permanent failures separately.
+- Outbound transport supports legacy HTTP signatures and optional RFC9421-style message signature headers.
+
+Testing:
+- Unit/integration coverage spans identifiers, AP generation, follow handling, signatures, resolver parsing, post mapping, stores, queues, Jetstream, runtime wiring, server dispatch, and recovery.
+- Local E2E covers ingest, retry/delivery, and cursor continuity.
+- Live E2E uses real Bluesky + GtS through a Cloudflare tunnel and covers discovery, follow, resolver actor/post targets, unfollowed post import, threaded delivery, media, reposts, AP read surfaces, and runtime metrics.
+
+## Verification
+
+Routine local verification:
+- `npm test`
+- `npm run e2e:local`
+
+Last local verification on 2026-05-08:
+- `npm test` passed, 30/30 tests.
+- `npm run e2e:local` returned `ok: true`.
+
+Live verification:
+- `npm run e2e:live`
+- `RUN_LIVE_E2E=1 npm run e2e:live:ci`
+
+Last live verification on 2026-05-08:
+- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS through `https://year-distributions-projectors-bidding.trycloudflare.com`.
+- Confirmed served actor `type: "Service"` and remote GtS account API `bot: true` for the bridged account.
+
+Do not mark live federation work complete unless the live harness passes or the failure is intentionally documented with artifacts.
+
+## Active Risks
+
+- A previous manual run captured thousands of unrelated DIDs in persistent storage, which indicates unscoped ingest happened at least once. Guardrails now exist, but this needs regression coverage that proves persistent storage does not grow from unrelated DIDs when no wanted DIDs are configured.
+- GtS/Mastodon follow state can remain `requested` during real-world runs. The live harness waits for `following=true`; any recurrence should be investigated from request logs and artifacts rather than assumed transient.
+- JSON files are adequate for local/dev and live harness runs, but not the intended production durability layer.
+- Inbound RFC9421 verification is not implemented; current strict inbound mode is legacy signature verification.
+
+## Next Work
+
+P0:
+- Add regression coverage for the unscoped-ingest storage incident.
+- Add an explicit startup/runtime signal when Jetstream is enabled but idle because there are no wanted DIDs.
+- Re-run live E2E after the docs cleanup and record the result here.
+
+P1:
+- Validate follow/discovery behavior against Mastodon in addition to GtS.
+- Add inbound RFC9421 message-signature verification.
+- Expand resolver parsing for more fediverse profile/status URL shapes.
+
+P2:
+- Replace JSON persistence with SQLite or Postgres.
+- Add operational alerting for sustained delivery failures and backlog growth.
+- Revisit Fedify or another AP framework only if compatibility maintenance becomes larger than the local implementation.
 
 ## Notes
-- Durability is currently JSON-file-backed for zero-dependency local/dev reliability.
-- For higher-scale production usage, move persistence from JSON files to SQLite/Postgres.
-- Latest manual-run diagnosis:
-  - persistent `store.json` captured records for thousands of DIDs, indicating Jetstream ingest was running without effective DID scoping.
-  - this is now tracked as Priority P0 and must be blocked by default behavior + tests.
+
+- Keep `live_testing.md` as the runbook for credentials, commands, and live quirks.
+- Keep `preliminary_planning.md` as compact architecture reference, not an active TODO list.

@@ -20,7 +20,7 @@ export function buildActorDocument({ baseUrl, profile, publicKeyPem }) {
   return {
     "@context": [ACTIVITYSTREAMS_CONTEXT, SECURITY_CONTEXT],
     id,
-    type: "Person",
+    type: "Service",
     bot: true,
     preferredUsername: profile.handle,
     name: profile.displayName ?? profile.handle,

@@ -42,7 +42,7 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   });
 
   assert.equal(actorRes.status, 200);
-  assert.equal(actorRes.body.type, "Person");
+  assert.equal(actorRes.body.type, "Service");
   assert.equal(actorRes.body.preferredUsername, "alice.bsky.social");
   assert.equal(actorRes.body.bot, true);
   assert.equal(typeof actorRes.body.summary, "string");

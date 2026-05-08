@@ -22,6 +22,21 @@ import {
 } from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
 
+const DISCOVERY_EXAMPLES = [
+  {
+    label: "@bsky.app",
+    query: "@bsky.app"
+  },
+  {
+    label: "bsky.app profile",
+    query: "https://bsky.app/profile/bsky.app"
+  },
+  {
+    label: "bsky.app post",
+    query: "https://bsky.app/profile/bsky.app/post/3l6oveex3ii2l"
+  }
+];
+
 export function createBridgeServer({
   baseUrl = null,
   store = new InMemoryBridgeStore(),
@@ -947,6 +962,9 @@ function renderDiscoveryFrontpage({ publicBaseUrl, input, result, error }) {
     .copy-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
     .copy-btn { border-color: #334155; background: #334155; }
     code { background: #f1f5f9; padding: 2px 6px; border-radius: 6px; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .examples a { border: 1px solid #cbd5e1; border-radius: 8px; color: #0f172a; display: inline-flex; padding: 6px 8px; text-decoration: none; }
+    .examples a:hover { background: #f8fafc; border-color: #94a3b8; }
     ul { margin: 10px 0 0; padding-left: 18px; }
     li { margin: 6px 0; }
     .error { color: #b91c1c; margin-top: 10px; }
@@ -959,7 +977,7 @@ function renderDiscoveryFrontpage({ publicBaseUrl, input, result, error }) {
     <p>Paste a Bluesky user or post and copy the single search target for Mastodon/GtS.</p>
     <div class="box">
       <form method="get" action="/">
-        <input type="text" name="q" value="${escapedInput}" placeholder="mouseu.bsky.social, @mouseu.bsky.social, or https://bsky.app/profile/.../post/..." autocomplete="off">
+        <input type="text" name="q" value="${escapedInput}" placeholder="@bsky.app or https://bsky.app/profile/bsky.app/post/3l6oveex3ii2l" autocomplete="off">
         <button type="submit">Resolve</button>
       </form>
       ${resultHtml}
@@ -975,7 +993,10 @@ function renderDiscoveryResult(result, error) {
   }
 
   if (!result) {
-    return `<p class="hint">Supported examples: <code>mouseu.bsky.social</code>, <code>@mouseu.bsky.social</code>, <code>https://bsky.app/profile/<id></code>, <code>https://bsky.app/profile/<id>/post/<rkey></code></p>`;
+    return `<p class="hint">Examples from Bluesky:</p>
+<div class="examples">
+${DISCOVERY_EXAMPLES.map(renderDiscoveryExample).join("\n")}
+</div>`;
   }
 
   const target = result.kind === "post"
@@ -991,6 +1012,11 @@ function renderDiscoveryResult(result, error) {
   <code id="resolved-target">${escapedTarget}</code>
   <button class="copy-btn" type="button" onclick="navigator.clipboard?.writeText(document.getElementById('resolved-target')?.textContent ?? '')">Copy</button>
 </div>`;
+}
+
+function renderDiscoveryExample(example) {
+  const href = `/?q=${encodeURIComponent(example.query)}`;
+  return `<a href="${escapeHtml(href)}"><code>${escapeHtml(example.label)}</code></a>`;
 }
 
 async function handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier }) {

@@ -444,6 +444,9 @@ test("dispatchBridgeRequest serves discovery frontpage", async () => {
   assert.equal(typeof response.body, "string");
   assert.equal(response.body.includes("Bluesky Bridge Resolver"), true);
   assert.equal(response.body.includes("<form"), true);
+  assert.equal(response.body.includes("@bsky.app"), true);
+  assert.equal(response.body.includes("https://bsky.app/profile/bsky.app/post/3l6oveex3ii2l"), true);
+  assert.equal(response.body.includes("mouseu.bsky.social"), false);
 });
 
 test("dispatchBridgeRequest resolves actor discovery query and materializes actor", async () => {

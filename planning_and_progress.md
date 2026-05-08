@@ -23,6 +23,7 @@ ActivityPub surface:
 - Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, original Bluesky web URL, public key material, counters/collections, and featured collection link.
 - Object/outbox endpoints serve cached or on-demand-materialized bridged posts; deleted objects return `Tombstone`.
 - Browser/HTML requests to bridged actor and object URLs redirect to the corresponding Bluesky profile/post, while ActivityPub/JSON/default fetches still receive AP JSON.
+- Resolver landing page examples use the official `bsky.app` profile and post URLs.
 
 Bluesky side:
 - DID is canonical; handles are aliases.

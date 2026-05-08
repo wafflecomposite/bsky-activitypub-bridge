@@ -20,15 +20,16 @@ Runtime:
 ActivityPub surface:
 - WebFinger, actor, inbox, followers, following, featured, outbox, object, root resolver page, and `/api/resolve`.
 - Follow inbox accepts and stores followers, resolves remote actor inboxes, queues signed `Accept` delivery, and can enforce inbound legacy HTTP signatures.
-- Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, public key material, counters/collections, and featured collection link.
+- Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, original Bluesky web URL, public key material, counters/collections, and featured collection link.
 - Object/outbox endpoints serve cached or on-demand-materialized bridged posts; deleted objects return `Tombstone`.
+- Browser/HTML requests to bridged actor and object URLs redirect to the corresponding Bluesky profile/post, while ActivityPub/JSON/default fetches still receive AP JSON.
 
 Bluesky side:
 - DID is canonical; handles are aliases.
 - Unknown handles can be resolved/materialized on WebFinger or resolver lookup.
 - Jetstream ingest supports scoped wanted DIDs/collections, cursor/dedup state, reconnect rewind, and client-side DID filtering.
 - Unfiltered Jetstream is blocked by default unless `UNSAFE_ALLOW_UNFILTERED_JETSTREAM` is set.
-- Post mapper covers text facets, links, mentions, hashtags, replies/thread context, self-label content warnings, media/external/record embeds, reposts, updates, and deletes.
+- Post mapper covers text facets, links, mentions, hashtags, replies/thread context, original Bluesky web URLs, self-label content warnings, media/external/record embeds, reposts, updates, and deletes.
 
 Delivery and durability:
 - Delivery planner groups by shared inbox with inbox fallback.
@@ -56,8 +57,8 @@ Live verification:
 - `RUN_LIVE_E2E=1 npm run e2e:live:ci`
 
 Last live verification on 2026-05-08:
-- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS through `https://year-distributions-projectors-bidding.trycloudflare.com`.
-- Confirmed served actor `type: "Service"` and remote GtS account API `bot: true` for the bridged account.
+- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS through `https://taxation-edmonton-southern-nasa.trycloudflare.com`.
+- Confirmed served actor `type: "Service"`, remote GtS account API `bot: true`, and original Bluesky profile/post URLs exposed through GtS while AP URI fetch/import still works.
 
 Do not mark live federation work complete unless the live harness passes or the failure is intentionally documented with artifacts.
 

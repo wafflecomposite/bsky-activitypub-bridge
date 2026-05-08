@@ -64,6 +64,7 @@ The automated harness:
 - starts the bridge in discovery mode, then ingest mode
 - verifies actor/profile metadata, remote account `bot` visibility, and featured collection availability
 - verifies resolver output for actor, followed post, and unfollowed post URLs
+- verifies AP fetch paths still work for remote import despite browser-facing redirects
 - imports an unfollowed bridge object through GtS status search
 - discovers and follows the bridged account from GtS
 - publishes a real Bluesky thread and verifies delivery/linkage in GtS

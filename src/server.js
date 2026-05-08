@@ -5,6 +5,7 @@ import { processInboxActivity } from "./ap/follow.js";
 import { resolveFollowerEndpoints } from "./ap/remote-actor.js";
 import { resolveWebFingerResource } from "./ap/webfinger.js";
 import { getPostRecord, getProfile, resolveHandleToDid } from "./bsky/public-api.js";
+import { blueskyPostUrl, blueskyProfileUrl } from "./bsky/web-url.js";
 import { mapBskyPostToActivityPub, parseAtPostUri } from "./bridge/post-mapper.js";
 import { InMemoryKeyManager } from "./crypto/key-manager.js";
 import { parseDiscoveryInput } from "./discovery/input-parser.js";
@@ -181,11 +182,11 @@ export async function dispatchBridgeRequest({
       return handleGetFeatured({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
     }
 
-    return handleGetActor({ url, store, keyManager, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
+    return handleGetActor({ url, headers, store, keyManager, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
   }
 
   if (method === "GET" && url.pathname.startsWith("/ap/object/")) {
-    return handleGetObject({ url, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
+    return handleGetObject({ url, headers, store, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
   }
 
   if (method === "POST" && url.pathname.startsWith("/ap/actor/") && url.pathname.endsWith("/inbox")) {
@@ -352,7 +353,7 @@ async function handleWebFinger({ url, store, publicBaseUrl, fetchImpl, profileCa
   };
 }
 
-async function handleGetActor({ url, store, keyManager, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
+async function handleGetActor({ url, headers, store, keyManager, publicBaseUrl, fetchImpl, profileCacheMaxAgeMs }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length);
@@ -363,6 +364,11 @@ async function handleGetActor({ url, store, keyManager, publicBaseUrl, fetchImpl
       contentType: "application/json",
       body: { error: error.message }
     };
+  }
+
+  if (prefersHtml(headers)) {
+    const profile = store.getActorByDid(did);
+    return redirectToOriginal(blueskyProfileUrl({ did, handle: profile?.handle }));
   }
 
   const profile = await ensureActorProfile({
@@ -585,7 +591,7 @@ async function handleGetFeatured({ url, store, publicBaseUrl, fetchImpl, profile
   };
 }
 
-async function handleGetObject({ url, store, publicBaseUrl, fetchImpl }) {
+async function handleGetObject({ url, headers, store, publicBaseUrl, fetchImpl }) {
   const match = /^\/ap\/object\/([^/]+)\/([^/]+)$/.exec(url.pathname);
   if (!match) {
     return {
@@ -606,6 +612,10 @@ async function handleGetObject({ url, store, publicBaseUrl, fetchImpl }) {
       contentType: "application/json",
       body: { error: error.message }
     };
+  }
+
+  if (prefersHtml(headers)) {
+    return redirectToOriginal(blueskyPostUrl({ did, rkey }));
   }
 
   let record = typeof store.getObjectByRkey === "function"
@@ -1136,11 +1146,64 @@ function sendJsonResponse(res, response) {
   const data = typeof response.body === "string"
     ? response.body
     : JSON.stringify(response.body);
-  res.writeHead(response.status, {
+  const headers = {
     "content-type": `${response.contentType}; charset=utf-8`,
-    "content-length": Buffer.byteLength(data)
+    "content-length": Buffer.byteLength(data),
+    ...(response.headers ?? {})
+  };
+  res.writeHead(response.status, {
+    ...headers
   });
   res.end(data);
+}
+
+function redirectToOriginal(location) {
+  return {
+    status: 302,
+    contentType: "text/plain",
+    headers: {
+      location
+    },
+    body: `Redirecting to ${location}`
+  };
+}
+
+function prefersHtml(headers = {}) {
+  const accept = readHeader(headers, "accept");
+  if (!accept) {
+    return false;
+  }
+
+  const mediaTypes = accept
+    .split(",")
+    .map((part) => part.split(";")[0].trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!mediaTypes.includes("text/html")) {
+    return false;
+  }
+
+  return !mediaTypes.some((type) => {
+    return type === "application/activity+json"
+      || type === "application/ld+json"
+      || type === "application/json";
+  });
+}
+
+function readHeader(headers, name) {
+  const direct = headers[name];
+  if (typeof direct === "string") {
+    return direct;
+  }
+
+  const lowerName = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lowerName && typeof value === "string") {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function escapeHtml(value) {

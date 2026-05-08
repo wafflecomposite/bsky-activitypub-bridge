@@ -50,11 +50,12 @@ Optional future surface:
 
 Actor:
 - Bluesky profile maps to ActivityPub `Service` so Mastodon-compatible servers treat bridged profiles as bot accounts.
-- Include profile fields where available: handle, display name, description, avatar, banner, bridge notice, followers/outbox/following/featured links, and public key.
+- Include profile fields where available: handle, display name, description, avatar, banner, original Bluesky web URL, bridge notice, followers/outbox/following/featured links, and public key.
 - Generate and persist a signing key per DID.
 
 Post:
 - `app.bsky.feed.post` create maps to `Create` with `Note`.
+- Note `url` points to the original Bluesky web post; the bridge AP object ID remains the note `id`.
 - Text facets map to safe HTML and ActivityPub tags. Use UTF-8 byte ranges and drop overlapping facets.
 - Replies map to `inReplyTo`; root/thread continuity maps to ActivityPub `context` where possible.
 - Self-labels map to `sensitive: true` plus a content-warning `summary`.

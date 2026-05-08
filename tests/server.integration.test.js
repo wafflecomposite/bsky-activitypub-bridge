@@ -45,6 +45,7 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   assert.equal(actorRes.body.type, "Service");
   assert.equal(actorRes.body.preferredUsername, "alice.bsky.social");
   assert.equal(actorRes.body.bot, true);
+  assert.equal(actorRes.body.url, "https://bsky.app/profile/alice.bsky.social");
   assert.equal(typeof actorRes.body.summary, "string");
   assert.equal(actorRes.body.summary.includes("Bridged by https://bridge.example"), true);
   assert.equal(actorRes.body.following, "https://bridge.example/ap/actor/did%3Aplc%3Aalice/following");
@@ -108,6 +109,59 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   });
   assert.equal(followersRes.status, 200);
   assert.equal(followersRes.body.totalItems, 1);
+});
+
+test("dispatchBridgeRequest redirects browser actor requests to Bluesky profile", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social"
+  });
+
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice",
+    headers: {
+      host: "bridge.example",
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    },
+    store,
+    keyManager,
+    baseUrl
+  });
+
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.location, "https://bsky.app/profile/alice.bsky.social");
+});
+
+test("dispatchBridgeRequest keeps ActivityPub actor JSON for federation accepts", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social"
+  });
+
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice",
+    headers: {
+      host: "bridge.example",
+      accept: "application/activity+json, application/ld+json"
+    },
+    store,
+    keyManager,
+    baseUrl
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.contentType, "application/activity+json");
+  assert.equal(response.body.type, "Service");
 });
 
 test("dispatchBridgeRequest serves object and outbox from cached activities", async () => {
@@ -212,6 +266,30 @@ test("dispatchBridgeRequest serves object and outbox from cached activities", as
 
   assert.equal(deletedRes.status, 410);
   assert.equal(deletedRes.body.type, "Tombstone");
+});
+
+test("dispatchBridgeRequest redirects browser object requests to Bluesky post", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/object/did%3Aplc%3Aalice/post1",
+    headers: {
+      host: "bridge.example",
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async () => {
+      throw new Error("browser redirects should not materialize posts");
+    }
+  });
+
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.location, "https://bsky.app/profile/did:plc:alice/post/post1");
 });
 
 test("dispatchBridgeRequest can materialize uncached object on demand", async () => {

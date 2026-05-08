@@ -6,6 +6,7 @@ import {
   actorInboxId,
   actorOutboxId
 } from "../domain/identifiers.js";
+import { blueskyProfileUrl } from "../bsky/web-url.js";
 
 const ACTIVITYSTREAMS_CONTEXT = "https://www.w3.org/ns/activitystreams";
 const SECURITY_CONTEXT = "https://w3id.org/security/v1";
@@ -24,6 +25,7 @@ export function buildActorDocument({ baseUrl, profile, publicKeyPem }) {
     bot: true,
     preferredUsername: profile.handle,
     name: profile.displayName ?? profile.handle,
+    url: blueskyProfileUrl({ did: profile.did, handle: profile.handle }),
     summary,
     inbox: actorInboxId(baseUrl, profile.did),
     outbox: actorOutboxId(baseUrl, profile.did),

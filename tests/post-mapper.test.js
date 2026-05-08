@@ -20,7 +20,7 @@ test("mapBskyPostToActivityPub maps basic post to Note and Create", () => {
   assert.equal(result.note["@context"], "https://www.w3.org/ns/activitystreams");
   assert.equal(result.note.content, "Hello world");
   assert.equal(result.note.id, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post1");
-  assert.equal(result.note.url, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post1");
+  assert.equal(result.note.url, "https://bsky.app/profile/did:plc:alice/post/post1");
   assert.deepEqual(result.note.to, ["https://www.w3.org/ns/activitystreams#Public"]);
   assert.deepEqual(result.note.cc, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
   assert.equal(result.create.type, "Create");

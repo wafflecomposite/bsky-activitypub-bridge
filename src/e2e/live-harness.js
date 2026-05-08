@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { createBridgeApplication } from "../app/application.js";
 import { getProfile } from "../bsky/public-api.js";
+import { blueskyPostUrl, blueskyProfileUrl } from "../bsky/web-url.js";
 
 const DEFAULT_DID = "did:plc:ct7l6fgjtseazmaunhzrbydz";
 const DEFAULT_UNFOLLOWED_POST_URL = "https://bsky.app/profile/did:plc:22tkvmk7w562u3vueqeufkoa/post/3mgapjtxh5k2p";
@@ -40,6 +41,10 @@ export async function runLiveE2EHarness({
 
     const tunnelUrl = tunnel.url;
     const did = await resolveDidFromHandle(resolvedCredentials.blueskyIdentifier);
+    const expectedBlueskyProfileUrl = blueskyProfileUrl({
+      did,
+      handle: resolvedCredentials.blueskyIdentifier
+    });
 
     app = createBridgeApplication({
       baseUrl: tunnelUrl,
@@ -71,7 +76,8 @@ export async function runLiveE2EHarness({
       tunnelUrl,
       port,
       did,
-      blueskyIdentifier: resolvedCredentials.blueskyIdentifier
+      blueskyIdentifier: resolvedCredentials.blueskyIdentifier,
+      expectedProfileUrl: expectedBlueskyProfileUrl
     });
 
     const resolverActor = await verifyResolverActorTarget({
@@ -162,6 +168,7 @@ export async function runLiveE2EHarness({
 
     const rootRkey = extractPostRkeyFromAtUri(postedThread.root.uri);
     const replyRkey = extractPostRkeyFromAtUri(postedThread.reply.uri);
+    const expectedRootBlueskyPostUrl = blueskyPostUrl({ did, rkey: rootRkey });
     const resolverPost = await verifyResolverPostTarget({
       resolverBaseUrl: localBaseUrl,
       publicBaseUrl: tunnelUrl,
@@ -239,7 +246,9 @@ export async function runLiveE2EHarness({
       ok: followState.following === true
         && bridgeActorProfile.serviceActor === true
         && bridgeActorProfile.bot === true
+        && bridgeActorProfile.profileUrlMatches === true
         && remoteAccountProfile.bot === true
+        && remoteAccountProfile.url === expectedBlueskyProfileUrl
         && bridgeActorProfile.featuredCollection === true
         && bridgeActorProfile.summaryHasBridgeNotice === true
         && bridgeActorProfile.avatarMatches === true
@@ -250,6 +259,7 @@ export async function runLiveE2EHarness({
         && resolverUnfollowedPostSearch.found === true
         && resolverPost.ok === true
         && resolverPostSearch.found === true
+        && resolverPostSearch.url === expectedRootBlueskyPostUrl
         && timelineThread.threadLinked === true
         && bridgeReadSurface.ok === true
         && timelineMedia.hasMediaAttachment === true
@@ -260,6 +270,8 @@ export async function runLiveE2EHarness({
       dataDir: tempDir,
       remoteAcct,
       did,
+      expectedBlueskyProfileUrl,
+      expectedRootBlueskyPostUrl,
       discovered,
       remoteAccountProfile,
       followState,
@@ -458,7 +470,7 @@ async function waitForBridgeReady({ port, did, timeoutMs }) {
   }, timeoutMs, 1_000);
 }
 
-async function verifyBridgeActorProfile({ tunnelUrl, port, did, blueskyIdentifier }) {
+async function verifyBridgeActorProfile({ tunnelUrl, port, did, blueskyIdentifier, expectedProfileUrl }) {
   const localBaseUrl = `http://127.0.0.1:${port}`;
   const actorUrl = `${localBaseUrl}/ap/actor/${encodeURIComponent(did)}`;
   const featuredUrl = `${localBaseUrl}/ap/actor/${encodeURIComponent(did)}/featured`;
@@ -495,6 +507,8 @@ async function verifyBridgeActorProfile({ tunnelUrl, port, did, blueskyIdentifie
     serviceActor: actor?.type === "Service",
     bot: actor?.bot === true,
     actorType: actor?.type ?? null,
+    profileUrl: actor?.url ?? null,
+    profileUrlMatches: actor?.url === expectedProfileUrl,
     featuredCollection: featured?.type === "OrderedCollection",
     summaryHasBridgeNotice: String(actor?.summary ?? "").includes(`Bridged by ${tunnelUrl}`),
     avatarMatches,
@@ -1017,7 +1031,9 @@ async function waitForStatusSearchByUrl({ instanceUrl, accessToken, targetUrl, m
   const startedAt = Date.now();
   let last = {
     found: false,
-    statusId: null
+    statusId: null,
+    url: null,
+    uri: null
   };
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -1035,7 +1051,9 @@ async function waitForStatusSearchByUrl({ instanceUrl, accessToken, targetUrl, m
         : statuses[0] ?? null;
       last = {
         found: status !== null,
-        statusId: status?.id ?? null
+        statusId: status?.id ?? null,
+        url: status?.url ?? null,
+        uri: status?.uri ?? null
       };
 
       if (last.found) {

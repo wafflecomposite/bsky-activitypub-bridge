@@ -3,6 +3,7 @@ import {
   actorId,
   objectId
 } from "../domain/identifiers.js";
+import { blueskyPostUrl } from "../bsky/web-url.js";
 
 const PUBLIC_AUDIENCE = "https://www.w3.org/ns/activitystreams#Public";
 const DEFAULT_VISIBILITY = "unlisted";
@@ -32,7 +33,7 @@ export function mapBskyPostToActivityPub({
     id: noteId,
     type: "Note",
     attributedTo,
-    url: noteId,
+    url: blueskyPostUrl({ did, rkey }),
     content: rendered.content,
     published: record.createdAt,
     to: audience.to,
@@ -451,7 +452,7 @@ function atUriToBskyWebUrl(uri) {
     return null;
   }
 
-  return `https://bsky.app/profile/${parsed.did}/post/${parsed.rkey}`;
+  return blueskyPostUrl({ did: parsed.did, rkey: parsed.rkey });
 }
 
 function mapReplyUriToActivityPubReference({ uri, baseUrl, currentDid, resolveReplyObjectId }) {

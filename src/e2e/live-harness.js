@@ -37,6 +37,10 @@ export async function runLiveE2EHarness({
   let tunnel = null;
   let app = null;
   let pendingProfileRestore = null;
+  let localBaseUrl = null;
+  let activeDid = null;
+  const receiverFollowCleanupTargets = [];
+  let receiverFollowCleanup = null;
 
   try {
     tunnel = await startQuickTunnel({
@@ -47,6 +51,7 @@ export async function runLiveE2EHarness({
 
     const tunnelUrl = tunnel.url;
     const did = await resolveDidFromHandle(resolvedCredentials.blueskyIdentifier);
+    activeDid = did;
     const liveJetstreamMaxDidsPerStream = normalizePositiveInteger(jetstreamMaxDidsPerStream, 8000);
     const liveWantedDids = normalizeWantedDids([did, ...extraWantedDids]);
     const expectedBlueskyProfileUrl = blueskyProfileUrl({
@@ -90,7 +95,7 @@ export async function runLiveE2EHarness({
     await app.start({ host: "127.0.0.1", port });
 
     await waitForBridgeReady({ port, did, timeoutMs: 90_000 });
-    const localBaseUrl = `http://127.0.0.1:${port}`;
+    localBaseUrl = `http://127.0.0.1:${port}`;
     const bridgeActorProfile = await verifyBridgeActorProfile({
       tunnelUrl,
       port,
@@ -137,6 +142,13 @@ export async function runLiveE2EHarness({
       const authenticatedAccount = await getAuthenticatedAccount({
         instanceUrl: receiver.instanceUrl,
         accessToken: receiver.accessToken
+      });
+      receiverFollowCleanupTargets.push({
+        name: receiver.name,
+        instanceUrl: receiver.instanceUrl,
+        accessToken: receiver.accessToken,
+        accountId: discovered.id,
+        candidates: followerActorCandidates({ instanceUrl: receiver.instanceUrl, receiverAccount: authenticatedAccount })
       });
       const followLifecycle = await verifyFollowLifecycle({
         localBaseUrl,
@@ -392,6 +404,13 @@ export async function runLiveE2EHarness({
       expectedWantedDidCount: liveWantedDids.length,
       maxDidsPerStream: liveJetstreamMaxDidsPerStream
     });
+    receiverFollowCleanup = await cleanupReceiverFollows({
+      targets: receiverFollowCleanupTargets,
+      localBaseUrl,
+      did,
+      timeoutMs: 180_000,
+      log
+    });
 
     const summary = {
       ok: everyReceiver(receiverAccounts, (entry) => entry.followState.following === true
@@ -435,6 +454,7 @@ export async function runLiveE2EHarness({
         && bridgeLabeledMediaObject.summary === LIVE_E2E_CONTENT_WARNING
         && bridgeRepost.found === true
         && jetstreamShardCheck.ok === true
+        && receiverFollowCleanup.ok === true
         && (runtimeMetrics?.delivery?.delivered ?? 0) >= receivers.length * 3,
       tunnelUrl,
       dataDir: tempDir,
@@ -469,6 +489,7 @@ export async function runLiveE2EHarness({
       postedRepost,
       bridgeRepost,
       jetstreamShardCheck,
+      receiverFollowCleanup,
       runtimeMetrics
     };
 
@@ -477,6 +498,17 @@ export async function runLiveE2EHarness({
     if (pendingProfileRestore) {
       await safeRestoreBlueskyProfileRecord(pendingProfileRestore, log);
       pendingProfileRestore = null;
+    }
+
+    if (!receiverFollowCleanup && receiverFollowCleanupTargets.length > 0) {
+      receiverFollowCleanup = await cleanupReceiverFollows({
+        targets: receiverFollowCleanupTargets,
+        localBaseUrl: app ? localBaseUrl : null,
+        did: activeDid,
+        timeoutMs: 90_000,
+        log,
+        bestEffort: true
+      });
     }
 
     await safeStopApp(app);
@@ -1116,6 +1148,68 @@ async function unfollowAndWait({ instanceUrl, accessToken, accountId, timeoutMs,
     timeoutMs,
     log
   });
+}
+
+async function cleanupReceiverFollows({
+  targets,
+  localBaseUrl,
+  did,
+  timeoutMs,
+  log,
+  bestEffort = false
+}) {
+  const entries = [];
+
+  for (const target of targets) {
+    const scopedLog = (line) => log(`${target.name}: cleanup ${line}`);
+    let relationship = null;
+    let bridgeFollower = null;
+    let error = null;
+
+    try {
+      scopedLog("unfollow starting");
+      relationship = await unfollowAndWait({
+        instanceUrl: target.instanceUrl,
+        accessToken: target.accessToken,
+        accountId: target.accountId,
+        timeoutMs,
+        log: scopedLog
+      });
+
+      if (localBaseUrl && did && Array.isArray(target.candidates) && target.candidates.length > 0) {
+        bridgeFollower = await waitForBridgeFollowerState({
+          localBaseUrl,
+          did,
+          candidates: target.candidates,
+          expectedPresent: false,
+          timeoutMs,
+          log: scopedLog
+        });
+      }
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+      scopedLog(`unfollow failed error=${error}`);
+    }
+
+    const relationshipOk = relationship?.following === false && relationship?.requested === false;
+    const bridgeOk = bridgeFollower ? bridgeFollower.ok === true : true;
+    scopedLog(`unfollow complete following=${String(relationship?.following)} requested=${String(relationship?.requested)} bridgeOk=${String(bridgeOk)}`);
+    entries.push([target.name, {
+      accountId: target.accountId,
+      relationship,
+      bridgeFollower,
+      error,
+      ok: error === null && relationshipOk && bridgeOk
+    }]);
+  }
+
+  const receivers = Object.fromEntries(entries);
+  return {
+    attempted: true,
+    bestEffort,
+    ok: entries.length > 0 && Object.values(receivers).every((entry) => entry.ok === true),
+    receivers
+  };
 }
 
 async function waitForRelationshipState({

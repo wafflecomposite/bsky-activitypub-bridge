@@ -19,8 +19,10 @@ Runtime:
 
 ActivityPub surface:
 - WebFinger, actor, inbox, followers, following, featured, outbox, object, root resolver page, and `/api/resolve`.
+- The HTTP server treats client-aborted request bodies as non-fatal, so partial POST disconnects do not crash the Node 22 process.
 - Follow inbox accepts and stores followers, resolves remote actor inboxes, queues signed `Accept` delivery, and can enforce inbound legacy HTTP signatures.
 - Follow inbox also accepts `Undo` of `Follow` and removes followers so unfollow/refollow churn does not leave stale bridge subscription state.
+- Live E2E unfollows temporarily bridged accounts from each ActivityPub receiver at the end of the run, with best-effort cleanup on failed runs.
 - `npm start` can emit `[bridge-follow]` JSON diagnostics for follow inbox processing, remote actor endpoint resolution, Accept enqueue, Undo removal, and follow-Accept delivery results when `BRIDGE_DEBUG_LOGS=follow` or `BRIDGE_DEBUG_LOGS=all`; debug logs are disabled by default.
 - Follow inbox POSTs can lazy-materialize missing Bluesky actor profiles by DID before processing the Follow, which covers receivers that reuse a cached actor inbox after bridge storage was reset or the actor was not otherwise seeded.
 - Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, original Bluesky web URL, public key material, counters/collections, and featured collection link.
@@ -59,14 +61,15 @@ Routine local verification:
 Last local verification on 2026-05-08:
 - `npm test` passed, 31/31 tests.
 - `npm run e2e:local` returned `ok: true` with `queuedUnlisted: true`, `unfollowedIngestStatus: "no-followers"`, and `queueSizeAfterUnfollowedIngest: 0`.
+- Added regression coverage for client-aborted request bodies after hosted Node 22 restarts from unhandled `ECONNRESET` / `Error: aborted`.
 
 Live verification:
 - `npm run e2e:live`
 - `RUN_LIVE_E2E=1 npm run e2e:live:ci`
 
 Last live verification on 2026-05-08:
-- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS + Mastodon through `https://return-decorating-travesti-lobby.trycloudflare.com`.
-- Confirmed served actor `type: "Service"`, remote account API `bot: true` on both receivers, original Bluesky profile/post URLs exposed where receivers support them while AP URI fetch/import still works, follow/unfollow/refollow state transitions update bridge followers as expected on both receivers, same-tunnel bridge restart still delivers a new post to both receivers, thread/media posts arrive as `unlisted`, Mastodon accepts quote posts of the test bot's own root post, profile description changes fan out as AP actor `Update`, labeled media maps to reason-only CW plus sensitive media state, repost delivery still works, and delivery queue drains to zero.
+- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS + Mastodon through a temporary Cloudflare tunnel.
+- Confirmed served actor `type: "Service"`, remote account API `bot: true` on both receivers, original Bluesky profile/post URLs exposed where receivers support them while AP URI fetch/import still works, follow/unfollow/refollow state transitions update bridge followers as expected on both receivers, same-tunnel bridge restart still delivers a new post to both receivers, thread/media posts arrive as `unlisted`, Mastodon accepts quote posts of the test bot's own root post, profile description changes fan out as AP actor `Update`, labeled media maps to reason-only CW plus sensitive media state, repost delivery still works, delivery queue drains to zero, and final receiver cleanup leaves both GtS and Mastodon at `following:false` / `requested:false` with no remaining bridge followers.
 
 Do not mark live federation work complete unless the live harness passes or the failure is intentionally documented with artifacts.
 

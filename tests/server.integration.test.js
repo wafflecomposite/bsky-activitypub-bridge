@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { Readable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import { RemoteActorCache } from "../src/ap/remote-actor-cache.js";
 import { verifyInboxRequestSignature } from "../src/federation/inbox-signature-verifier.js";
 import { createSignedPostHeaders } from "../src/federation/http-signature.js";
-import { dispatchBridgeRequest, shouldReadRequestBody } from "../src/server.js";
+import { createBridgeServer, dispatchBridgeRequest, shouldReadRequestBody } from "../src/server.js";
 import { InMemoryKeyManager } from "../src/crypto/key-manager.js";
 import { InMemoryDeliveryQueue } from "../src/ingest/jetstream-processor.js";
 import { InMemoryBridgeStore } from "../src/storage/in-memory-store.js";
@@ -1285,3 +1287,96 @@ test("shouldReadRequestBody keeps reading POST-like methods", () => {
   assert.equal(shouldReadRequestBody({ method: "PUT" }), true);
   assert.equal(shouldReadRequestBody({ method: "PATCH" }), true);
 });
+
+test("createBridgeServer keeps running when a client aborts a request body", async () => {
+  const store = new InMemoryBridgeStore();
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    displayName: "Alice"
+  });
+
+  const app = createBridgeServer({
+    baseUrl: "http://bridge.example",
+    store,
+    keyManager: new InMemoryKeyManager()
+  });
+
+  let unhandledRejection = null;
+  const onUnhandledRejection = (reason) => {
+    unhandledRejection = reason;
+  };
+  process.prependListener("unhandledRejection", onUnhandledRejection);
+
+  try {
+    app.server.emit("request", createAbortedPostRequest(), createMockResponse());
+    await delay(50);
+
+    if (unhandledRejection) {
+      assert.fail(unhandledRejection instanceof Error ? unhandledRejection.message : String(unhandledRejection));
+    }
+
+    const response = createMockResponse();
+    app.server.emit("request", createGetActorRequest(), response);
+    await response.ended;
+
+    assert.equal(response.status, 200);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+    await app.stop();
+  }
+});
+
+function createAbortedPostRequest() {
+  const error = new Error("aborted");
+  error.code = "ECONNRESET";
+  const req = new Readable({
+    read() {
+      this.destroy(error);
+    }
+  });
+  req.method = "POST";
+  req.url = "/ap/actor/did%3Aplc%3Aalice/inbox";
+  req.headers = {
+    host: "bridge.example",
+    "content-type": "application/activity+json",
+    "content-length": "100"
+  };
+  return req;
+}
+
+function createGetActorRequest() {
+  const req = Readable.from([]);
+  req.method = "GET";
+  req.url = "/ap/actor/did%3Aplc%3Aalice";
+  req.headers = {
+    host: "bridge.example",
+    accept: "application/activity+json"
+  };
+  return req;
+}
+
+function createMockResponse() {
+  let resolveEnded;
+  const ended = new Promise((resolve) => {
+    resolveEnded = resolve;
+  });
+
+  return {
+    destroyed: false,
+    headersSent: false,
+    status: null,
+    headers: null,
+    body: "",
+    ended,
+    writeHead(status, headers) {
+      this.status = status;
+      this.headers = headers;
+      this.headersSent = true;
+    },
+    end(body) {
+      this.body = body;
+      resolveEnded();
+    }
+  };
+}

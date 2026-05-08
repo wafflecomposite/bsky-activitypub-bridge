@@ -75,6 +75,7 @@ The automated harness:
 - imports an unfollowed bridge object through GtS and Mastodon status search
 - discovers and follows the bridged account from GtS and Mastodon
 - verifies follow/unfollow/refollow lifecycle from GtS and Mastodon, including receiver relationship state and bridge followers collection updates
+- unfollows the temporarily bridged account from each ActivityPub receiver at the end of the run, with best-effort cleanup on failed runs
 - restarts the bridge under the same Cloudflare tunnel URL and verifies existing remote subscribers still receive a new Bluesky post
 - temporarily updates the Bluesky profile description and verifies both receivers get the ActivityPub actor `Update`, then restores the original profile
 - publishes a real Bluesky thread and verifies delivery/linkage plus `unlisted` visibility in both receivers

@@ -51,31 +51,25 @@ export function createBridgeServer({
 } = {}) {
   let publicBaseUrl = baseUrl;
 
-  const server = http.createServer(async (req, res) => {
-    const bodyText = shouldReadRequestBody(req)
-      ? await readRawBody(req)
-      : "";
+  const server = http.createServer((req, res) => {
+    void handleIncomingRequest({
+      req,
+      res,
+      getPublicBaseUrl: () => publicBaseUrl,
+      store,
+      keyManager,
+      fetchImpl,
+      deliveryQueue,
+      actorCache,
+      inboxSignatureVerifier,
+      profileCacheMaxAgeMs,
+      followLogger
+    }).catch((error) => {
+      if (isClientAbortError(error) || req.destroyed || res.destroyed) {
+        return;
+      }
 
-    try {
-      const response = await dispatchBridgeRequest({
-        method: req.method,
-        rawUrl: req.url,
-        headers: req.headers,
-        bodyText,
-        store,
-        keyManager,
-        baseUrl: publicBaseUrl,
-        fetchImpl,
-        deliveryQueue,
-        actorCache,
-        inboxSignatureVerifier,
-        profileCacheMaxAgeMs,
-        followLogger
-      });
-
-      sendJsonResponse(res, response);
-    } catch (error) {
-      sendJsonResponse(res, {
+      sendJsonResponseIfPossible(res, {
         status: 500,
         contentType: "application/json",
         body: {
@@ -83,7 +77,7 @@ export function createBridgeServer({
           detail: error instanceof Error ? error.message : String(error)
         }
       });
-    }
+    });
   });
 
   async function start({ port = 0, host = "127.0.0.1" } = {}) {
@@ -136,6 +130,54 @@ export function createBridgeServer({
     server,
     getBaseUrl: () => publicBaseUrl
   };
+}
+
+async function handleIncomingRequest({
+  req,
+  res,
+  getPublicBaseUrl,
+  store,
+  keyManager,
+  fetchImpl,
+  deliveryQueue,
+  actorCache,
+  inboxSignatureVerifier,
+  profileCacheMaxAgeMs,
+  followLogger
+}) {
+  const bodyText = shouldReadRequestBody(req)
+    ? await readRawBody(req)
+    : "";
+
+  let response;
+  try {
+    response = await dispatchBridgeRequest({
+      method: req.method,
+      rawUrl: req.url,
+      headers: req.headers,
+      bodyText,
+      store,
+      keyManager,
+      baseUrl: getPublicBaseUrl(),
+      fetchImpl,
+      deliveryQueue,
+      actorCache,
+      inboxSignatureVerifier,
+      profileCacheMaxAgeMs,
+      followLogger
+    });
+  } catch (error) {
+    response = {
+      status: 500,
+      contentType: "application/json",
+      body: {
+        error: "Internal server error",
+        detail: error instanceof Error ? error.message : String(error)
+      }
+    };
+  }
+
+  sendJsonResponse(res, response);
 }
 
 export async function dispatchBridgeRequest({
@@ -1467,6 +1509,28 @@ function sendJsonResponse(res, response) {
     ...headers
   });
   res.end(data);
+}
+
+function sendJsonResponseIfPossible(res, response) {
+  if (res.destroyed || res.headersSent) {
+    return;
+  }
+
+  try {
+    sendJsonResponse(res, response);
+  } catch {
+    // The only thing left to do after a socket-level write failure is stop.
+  }
+}
+
+function isClientAbortError(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  return error.code === "ECONNRESET"
+    || error.name === "AbortError"
+    || error.message === "aborted";
 }
 
 function redirectToOriginal(location) {

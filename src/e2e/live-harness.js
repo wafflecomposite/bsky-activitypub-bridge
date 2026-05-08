@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { createBridgeApplication } from "../app/application.js";
-import { getPostRecord, getProfile } from "../bsky/public-api.js";
+import { getProfile } from "../bsky/public-api.js";
 import { blueskyPostUrl, blueskyProfileUrl } from "../bsky/web-url.js";
 
 const DEFAULT_DID = "did:plc:ct7l6fgjtseazmaunhzrbydz";
@@ -54,15 +54,23 @@ export async function runLiveE2EHarness({
       handle: resolvedCredentials.blueskyIdentifier
     });
     const expectedBridgeActorUrl = `${tunnelUrl}/ap/actor/${encodeURIComponent(did)}`;
-
-    app = createBridgeApplication({
+    const createApp = ({ jetstreamEnabled }) => createBridgeApplication({
       baseUrl: tunnelUrl,
       dataDir: tempDir,
       strictInboxSignatures: false,
       postVisibility: "unlisted",
-      jetstream: {
-        enabled: false
-      },
+      jetstream: jetstreamEnabled
+        ? {
+            enabled: true,
+            autoFollowedDids: false,
+            wantedDids: liveWantedDids,
+            wantedCollections: ["app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.actor.profile"],
+            wantedDidsRefreshMs: 0,
+            maxDidsPerStream: liveJetstreamMaxDidsPerStream
+          }
+        : {
+            enabled: false
+          },
       delivery: {
         drainIntervalMs: 500,
         drainBatchSize: 100,
@@ -74,6 +82,8 @@ export async function runLiveE2EHarness({
         }
       }
     });
+
+    app = createApp({ jetstreamEnabled: false });
 
     app.store.upsertActor({ did, handle: resolvedCredentials.blueskyIdentifier });
     app.keyManager.ensureKeyPair(did);
@@ -106,10 +116,6 @@ export async function runLiveE2EHarness({
       timeoutMs: 180_000,
       log: receiverLog(log, receiver)
     }));
-    const quoteTargetRecord = await getPostRecord({
-      did: resolverUnfollowedPost.did,
-      rkey: resolverUnfollowedPost.rkey
-    });
     const remoteAcct = resolverActor.target;
     const receiverAccountEntries = [];
     for (const receiver of receivers) {
@@ -156,33 +162,48 @@ export async function runLiveE2EHarness({
     await app.stop();
     app = null;
 
-    app = createBridgeApplication({
-      baseUrl: tunnelUrl,
-      dataDir: tempDir,
-      strictInboxSignatures: false,
-      postVisibility: "unlisted",
-      jetstream: {
-        enabled: true,
-        autoFollowedDids: false,
-        wantedDids: liveWantedDids,
-        wantedCollections: ["app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.actor.profile"],
-        wantedDidsRefreshMs: 0,
-        maxDidsPerStream: liveJetstreamMaxDidsPerStream
-      },
-      delivery: {
-        drainIntervalMs: 500,
-        drainBatchSize: 100,
-        messageSignaturesEnabled,
-        onTransportResult: (event) => {
-          if (event.status === null || event.status >= 400) {
-            log(`delivery-failure destination=${event.destination} status=${event.status} body=${event.responseBody ?? ""}`);
-          }
-        }
-      }
-    });
+    app = createApp({ jetstreamEnabled: true });
 
     app.store.upsertActor({ did, handle: resolvedCredentials.blueskyIdentifier });
     await app.start({ host: "127.0.0.1", port });
+    await waitForBridgeReady({ port, did, timeoutMs: 90_000 });
+
+    await app.stop();
+    app = null;
+
+    app = createApp({ jetstreamEnabled: true });
+    app.store.upsertActor({ did, handle: resolvedCredentials.blueskyIdentifier });
+    await app.start({ host: "127.0.0.1", port });
+    await waitForBridgeReady({ port, did, timeoutMs: 90_000 });
+    await waitForJetstreamReady({
+      runtime: app.getRuntime(),
+      expectedWantedDidCount: liveWantedDids.length,
+      timeoutMs: 30_000,
+      log
+    });
+
+    const postedAfterRestart = await createBlueskyTextPost({
+      identifier: resolvedCredentials.blueskyIdentifier,
+      appPassword: resolvedCredentials.blueskyAppPassword,
+      textPrefix: "Bridge automated live e2e after restart"
+    });
+
+    const timelineAfterRestart = await mapReceivers(receivers, async (receiver) => waitForTimelinePost({
+      instanceUrl: receiver.instanceUrl,
+      accessToken: receiver.accessToken,
+      marker: postedAfterRestart.marker,
+      expectedRemoteAcct: remoteAcct,
+      expectedUriPrefix: tunnelUrl,
+      expectedVisibility: "unlisted",
+      timeoutMs: 180_000,
+      log: receiverLog(log, receiver)
+    }));
+    const bridgeRestartDelivery = {
+      sameTunnelUrl: true,
+      tunnelUrl,
+      posted: postedAfterRestart,
+      timeline: timelineAfterRestart
+    };
 
     const profileUpdateMarker = `Bridge automated live e2e profile ${new Date().toISOString()}`;
     pendingProfileRestore = await setTemporaryBlueskyProfileDescription({
@@ -250,13 +271,13 @@ export async function runLiveE2EHarness({
       log
     });
 
-    const quotedObjectId = resolverUnfollowedPost.target;
+    const quotedObjectId = resolverPost.target;
     const postedQuote = await createBlueskyQuotePost({
       identifier: resolvedCredentials.blueskyIdentifier,
       appPassword: resolvedCredentials.blueskyAppPassword,
       textPrefix: "Bridge automated live e2e quote",
-      subjectUri: quoteTargetRecord.uri ?? `at://${resolverUnfollowedPost.did}/app.bsky.feed.post/${resolverUnfollowedPost.rkey}`,
-      subjectCid: quoteTargetRecord.cid
+      subjectUri: postedThread.root.uri,
+      subjectCid: postedThread.root.cid
     });
 
     const timelineQuote = await mapReceivers(receivers, async (receiver) => waitForTimelineQuotePost({
@@ -279,7 +300,7 @@ export async function runLiveE2EHarness({
       rkey: quoteRkey,
       marker: postedQuote.marker,
       quotedObjectId,
-      quotedDid: resolverUnfollowedPost.did,
+      quotedDid: did,
       timeoutMs: 90_000,
       log
     });
@@ -388,6 +409,8 @@ export async function runLiveE2EHarness({
         && resolverActor.ok === true
         && resolverUnfollowedPost.ok === true
         && everyReceiver(resolverUnfollowedPostSearch, (entry) => entry.found === true)
+        && everyReceiver(bridgeRestartDelivery.timeline, (entry) => entry.found === true
+          && entry.visibility === "unlisted")
         && resolverPost.ok === true
         && everyReceiver(resolverPostSearch, (entry) => entry.found === true && entry.url === expectedRootBlueskyPostUrl)
         && everyReceiver(profileUpdate, (entry) => entry.actorSummaryHasMarker === true && entry.remoteNoteHasMarker === true)
@@ -426,6 +449,7 @@ export async function runLiveE2EHarness({
       resolverActor,
       resolverUnfollowedPost,
       resolverUnfollowedPostSearch,
+      bridgeRestartDelivery,
       postedThread,
       resolverPost,
       resolverPostSearch,
@@ -1415,6 +1439,21 @@ async function createBlueskyPostRecord({ session, text, reply = null, recordExtr
   return createResponse.json();
 }
 
+async function createBlueskyTextPost({ identifier, appPassword, textPrefix }) {
+  const marker = `${textPrefix} ${new Date().toISOString()}`;
+  const session = await createBlueskySession({ identifier, appPassword });
+  const created = await createBlueskyPostRecord({
+    session,
+    text: marker
+  });
+
+  return {
+    marker,
+    uri: created.uri,
+    cid: created.cid
+  };
+}
+
 async function createBlueskyImagePost({ identifier, appPassword, textPrefix, imagePath, labels = null }) {
   if (!imagePath) {
     throw new Error("imagePath is required for media post");
@@ -1625,6 +1664,65 @@ async function waitForProfileUpdate({
     }
 
     await sleep(2_000);
+  }
+
+  return last;
+}
+
+async function waitForTimelinePost({
+  instanceUrl,
+  accessToken,
+  marker,
+  expectedRemoteAcct = null,
+  expectedUriPrefix = null,
+  expectedVisibility = null,
+  timeoutMs,
+  log
+}) {
+  const startedAt = Date.now();
+  let last = {
+    found: false,
+    statusId: null,
+    visibility: null,
+    visibilityMatches: expectedVisibility === null ? null : false
+  };
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const statuses = await gtsApi({
+        instanceUrl,
+        accessToken,
+        path: "/api/v1/timelines/home?limit=80",
+        timeoutMs: 30_000
+      });
+
+      const list = Array.isArray(statuses) ? statuses : [];
+      const status = list.find((entry) => {
+        return statusMatchesExpectedBridge(entry, { expectedRemoteAcct, expectedUriPrefix })
+          && statusContainsMarker(entry, marker);
+      }) ?? null;
+      const visibility = typeof status?.visibility === "string" ? status.visibility : null;
+      const visibilityMatches = expectedVisibility === null || visibility === expectedVisibility;
+
+      last = {
+        found: status !== null,
+        statusId: status?.id ?? null,
+        visibility,
+        visibilityMatches: expectedVisibility === null ? null : visibilityMatches
+      };
+
+      if (last.found && visibilityMatches) {
+        return last;
+      }
+
+      if (last.found) {
+        log(`timeline post waiting; visibility=${String(visibility)}`);
+      }
+    } catch (error) {
+      log(`timeline post retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(3_000);
   }
 
   return last;
@@ -2121,11 +2219,14 @@ async function waitForBridgeQuoteObject({
         && body?.quoteUri === quotedObjectId
         && body?._misskey_quote === quotedObjectId;
       const fallbackLink = content.includes("quote-inline") && content.includes(quotedObjectId);
-      const authorizationMatches = authorization?.type === "QuoteAuthorization"
-        && authorization?.interactionTarget === quotedObjectId
-        && authorization?.interactingObject === publicObjectId
-        && authorization?.attributedTo === `${publicBaseUrl}/ap/actor/${encodeURIComponent(quotedDid)}`;
-      const authorizationFetchOk = authorization !== null;
+      const expectsAuthorization = quotedDid !== did;
+      const authorizationMatches = expectsAuthorization
+        ? authorization?.type === "QuoteAuthorization"
+          && authorization?.interactionTarget === quotedObjectId
+          && authorization?.interactingObject === publicObjectId
+          && authorization?.attributedTo === `${publicBaseUrl}/ap/actor/${encodeURIComponent(quotedDid)}`
+        : quoteAuthorization === null;
+      const authorizationFetchOk = expectsAuthorization ? authorization !== null : true;
 
       last = {
         ok: found && quoteMatches && compatibilityFieldsMatch && fallbackLink && authorizationMatches && authorizationFetchOk,
@@ -2457,6 +2558,29 @@ async function waitForQueueDepthZero({ runtime, timeoutMs, log }) {
 
     log(`waiting for queue drain; depth=${metrics.queueDepth}`);
     await sleep(1000);
+  }
+}
+
+async function waitForJetstreamReady({ runtime, expectedWantedDidCount, timeoutMs, log }) {
+  if (!runtime || typeof runtime.getMetrics !== "function") {
+    return;
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const jetstream = runtime.getMetrics()?.jetstream;
+    const connectedShardCount = Array.isArray(jetstream?.shards)
+      ? jetstream.shards.filter((shard) => typeof shard.connectionUrl === "string" && shard.connectionUrl).length
+      : 0;
+
+    if (jetstream?.running === true
+      && jetstream?.wantedDidCount === expectedWantedDidCount
+      && connectedShardCount === jetstream?.shardCount) {
+      return;
+    }
+
+    log(`waiting for jetstream after restart; running=${String(jetstream?.running)} wanted=${String(jetstream?.wantedDidCount)} connectedShards=${connectedShardCount}`);
+    await sleep(1_000);
   }
 }
 

@@ -404,6 +404,134 @@ test("dispatchBridgeRequest can materialize uncached object on demand", async ()
   assert.equal(cached?.object?.content, "late fetched");
 });
 
+test("dispatchBridgeRequest rebuilds expired cached objects on demand", async () => {
+  const baseUrl = "https://bridge.example";
+  let now = Date.parse("2026-03-04T00:00:00.000Z");
+  const store = new InMemoryBridgeStore({
+    objectCacheTtlMs: 1000,
+    now: () => now
+  });
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertObjectActivity({
+    did: "did:plc:alice",
+    rkey: "expired1",
+    operation: "create",
+    object: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/expired1",
+      type: "Note",
+      content: "expired content",
+      published: "2026-03-04T00:00:00.000Z"
+    },
+    activity: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/expired1/activity/create",
+      type: "Create",
+      published: "2026-03-04T00:00:00.000Z"
+    }
+  });
+
+  now += 1001;
+  let fetched = false;
+  const objectRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/object/did%3Aplc%3Aalice/expired1",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      fetched = true;
+      assert.equal(
+        url,
+        "https://public.api.bsky.app/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aalice&collection=app.bsky.feed.post&rkey=expired1"
+      );
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          uri: "at://did:plc:alice/app.bsky.feed.post/expired1",
+          cid: "cid-expired-1",
+          value: {
+            $type: "app.bsky.feed.post",
+            text: "rebuilt content",
+            createdAt: "2026-03-04T00:00:01.000Z"
+          }
+        })
+      };
+    }
+  });
+
+  assert.equal(fetched, true);
+  assert.equal(objectRes.status, 200);
+  assert.equal(objectRes.body.content, "rebuilt content");
+  assert.equal(store.getObjectByRkey("did:plc:alice", "expired1")?.object?.content, "rebuilt content");
+});
+
+test("dispatchBridgeRequest rebuilds expired repost objects on demand", async () => {
+  const baseUrl = "https://bridge.example";
+  let now = Date.parse("2026-03-04T00:00:00.000Z");
+  const store = new InMemoryBridgeStore({
+    objectCacheTtlMs: 1000,
+    now: () => now
+  });
+  const keyManager = new InMemoryKeyManager();
+
+  store.upsertObjectActivity({
+    did: "did:plc:alice",
+    rkey: "repost:rp1",
+    operation: "create",
+    object: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/repost%3Arp1/activity/announce",
+      type: "Announce",
+      actor: "https://bridge.example/ap/actor/did%3Aplc%3Aalice",
+      object: "https://bridge.example/ap/object/did%3Aplc%3Abob/old"
+    },
+    activity: {
+      id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/repost%3Arp1/activity/announce",
+      type: "Announce",
+      actor: "https://bridge.example/ap/actor/did%3Aplc%3Aalice",
+      object: "https://bridge.example/ap/object/did%3Aplc%3Abob/old"
+    }
+  });
+
+  now += 1001;
+  const objectRes = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/object/did%3Aplc%3Aalice/repost%3Arp1",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl,
+    fetchImpl: async (url) => {
+      assert.equal(
+        url,
+        "https://public.api.bsky.app/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aalice&collection=app.bsky.feed.repost&rkey=rp1"
+      );
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({
+          uri: "at://did:plc:alice/app.bsky.feed.repost/rp1",
+          cid: "cid-rp1",
+          value: {
+            $type: "app.bsky.feed.repost",
+            createdAt: "2026-03-04T00:00:01.000Z",
+            subject: {
+              uri: "at://did:plc:bob/app.bsky.feed.post/new",
+              cid: "cid-new"
+            }
+          }
+        })
+      };
+    }
+  });
+
+  assert.equal(objectRes.status, 200);
+  assert.equal(objectRes.body.type, "Announce");
+  assert.equal(objectRes.body.object, "https://bridge.example/ap/object/did%3Aplc%3Abob/new");
+  assert.equal(store.getObjectByRkey("did:plc:alice", "repost:rp1")?.object?.object, "https://bridge.example/ap/object/did%3Aplc%3Abob/new");
+});
+
 test("dispatchBridgeRequest materializes uncached object even when actor profile is unavailable", async () => {
   const baseUrl = "https://bridge.example";
   const store = new InMemoryBridgeStore();

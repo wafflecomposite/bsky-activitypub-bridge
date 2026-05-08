@@ -58,6 +58,11 @@ Useful options:
 - `LIVE_E2E_RUN_ID`
 - `JETSTREAM_MAX_DIDS_PER_STREAM` default `8000`
 - `LIVE_E2E_EXTRA_WANTED_DIDS` optional comma-separated synthetic DIDs to force multiple live Jetstream shards during verification
+- `OBJECT_CACHE_TTL_MS` default `604800000` (7 days)
+- `TOMBSTONE_CACHE_TTL_MS` default `2592000000` (30 days)
+- `OBJECT_CACHE_MAX_RECORDS` default `50000`
+- `PROFILE_CACHE_TTL_MS` default `86400000` (24 hours)
+- `CACHE_PRUNE_INTERVAL_MS` default `300000` (5 minutes)
 
 ## What The Harness Checks
 
@@ -70,10 +75,11 @@ The automated harness:
 - imports an unfollowed bridge object through GtS and Mastodon status search
 - discovers and follows the bridged account from GtS and Mastodon
 - verifies follow/unfollow/refollow lifecycle from GtS and Mastodon, including receiver relationship state and bridge followers collection updates
+- restarts the bridge under the same Cloudflare tunnel URL and verifies existing remote subscribers still receive a new Bluesky post
 - temporarily updates the Bluesky profile description and verifies both receivers get the ActivityPub actor `Update`, then restores the original profile
 - publishes a real Bluesky thread and verifies delivery/linkage plus `unlisted` visibility in both receivers
 - verifies bridge outbox/object endpoints for the thread, including unlisted ActivityPub addressing
-- publishes a quote post and verifies bridge FEP-044f quote fields, fallback link, quote authorization, and receiver quote references
+- publishes a quote post of the test bot's own thread root and verifies bridge FEP-044f quote fields, fallback link, and receiver quote references
 - publishes a media post and verifies receiver `unlisted` visibility plus AP attachment output
 - publishes a labeled media post and verifies receiver plus AP CW/sensitive-media output with `unlisted` visibility
 - publishes a repost and verifies ActivityPub `Announce`
@@ -99,6 +105,8 @@ ENABLE_JETSTREAM=1 \
 JETSTREAM_AUTO_FOLLOWED_DIDS=1 \
 JETSTREAM_WANTED_DIDS_REFRESH_MS=2000 \
 BRIDGE_POST_VISIBILITY='unlisted' \
+OBJECT_CACHE_TTL_MS=604800000 \
+OBJECT_CACHE_MAX_RECORDS=50000 \
 SEED_ACTORS='did:plc:ct7l6fgjtseazmaunhzrbydz=bridgetest7334.bsky.social' \
 npm start
 ```

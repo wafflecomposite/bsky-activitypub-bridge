@@ -25,7 +25,7 @@ ActivityPub surface:
 - Follow inbox POSTs can lazy-materialize missing Bluesky actor profiles by DID before processing the Follow, which covers receivers that reuse a cached actor inbox after bridge storage was reset or the actor was not otherwise seeded.
 - Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, original Bluesky web URL, public key material, counters/collections, and featured collection link.
 - Bluesky profile commits for followed actors update stored actor profile fields and fan out ActivityPub actor `Update` activities.
-- Object/outbox endpoints serve cached or on-demand-materialized bridged posts; deleted objects return `Tombstone`.
+- Object/outbox endpoints serve bounded cached posts or on-demand-materialized bridged posts; expired object misses are fetched from Bluesky again, while retained deleted objects return `Tombstone`.
 - Bridged posts default to unlisted ActivityPub addressing, with followers in `to` and public audience in `cc`, to avoid public timeline flooding.
 - Browser/HTML requests to bridged actor and object URLs redirect to the corresponding Bluesky profile/post, while ActivityPub/JSON/default fetches still receive AP JSON.
 - Resolver landing page examples use the official `bsky.app` profile and post URLs.
@@ -36,18 +36,19 @@ Bluesky side:
 - Jetstream ingest supports scoped wanted DIDs/collections, profile update fanout, cursor/dedup state, reconnect rewind, and client-side DID filtering.
 - Jetstream followed-DID subscriptions are sharded by `JETSTREAM_MAX_DIDS_PER_STREAM` so the bridge can stay below per-connection `wantedDids` limits while keeping per-shard cursor/dedup state.
 - Unfiltered Jetstream is blocked by default unless `UNSAFE_ALLOW_UNFILTERED_JETSTREAM` is set.
-- Post mapper covers text facets, links, mentions, hashtags, replies/thread context, original Bluesky web URLs, unlisted AP audiences, Bluesky content labels/CWs with sensitive media flags, media/external embeds, FEP-044f quote posts with compatibility fields and quote authorization stamps, reposts, updates, and deletes.
+- Post mapper covers text facets, links, mentions, hashtags, replies/thread context with lazily dereferenceable bridge object IDs, original Bluesky web URLs, unlisted AP audiences, Bluesky content labels/CWs with sensitive media flags, media/external embeds, FEP-044f quote posts with compatibility fields and quote authorization stamps, reposts, updates, and deletes.
 
 Delivery and durability:
 - Delivery planner groups by shared inbox with inbox fallback.
 - File-backed queue/store/state/key manager support restart recovery and debounced async persistence with explicit flush on shutdown.
+- File-backed and memory stores keep follower subscriptions durable, but post/object records and cached profile details are TTL/LRU-pruned by default and can be rebuilt from Bluesky on future dereference.
 - Delivery worker records metrics, retries transient failures with capped exponential backoff, and treats permanent failures separately.
 - Outbound transport supports legacy HTTP signatures and optional RFC9421-style message signature headers.
 
 Testing:
 - Unit/integration coverage spans identifiers, AP generation, follow handling, signatures, resolver parsing, post mapping, stores, queues, Jetstream, runtime wiring, server dispatch, and recovery.
 - Local E2E covers ingest, retry/delivery, and cursor continuity.
-- Live E2E uses real Bluesky + GtS + Mastodon through a Cloudflare tunnel and covers discovery, follow, resolver actor/post targets, unfollowed post import, profile update delivery, threaded delivery, unlisted visibility, quote posts, media, labeled media CW/sensitivity, reposts, AP read surfaces, and runtime metrics.
+- Live E2E uses real Bluesky + GtS + Mastodon through a Cloudflare tunnel and covers discovery, follow, resolver actor/post targets, unfollowed post import, same-tunnel bridge restart delivery to existing subscribers, profile update delivery, threaded delivery, unlisted visibility, quote posts of the test bot's own posts, media, labeled media CW/sensitivity, reposts, AP read surfaces, and runtime metrics.
 
 ## Verification
 
@@ -56,7 +57,7 @@ Routine local verification:
 - `npm run e2e:local`
 
 Last local verification on 2026-05-08:
-- `npm test` passed, 30/30 tests.
+- `npm test` passed, 31/31 tests.
 - `npm run e2e:local` returned `ok: true` with `queuedUnlisted: true`, `unfollowedIngestStatus: "no-followers"`, and `queueSizeAfterUnfollowedIngest: 0`.
 
 Live verification:
@@ -64,8 +65,8 @@ Live verification:
 - `RUN_LIVE_E2E=1 npm run e2e:live:ci`
 
 Last live verification on 2026-05-08:
-- `JETSTREAM_MAX_DIDS_PER_STREAM=1 LIVE_E2E_EXTRA_WANTED_DIDS=did:plc:22tkvmk7w562u3vueqeufkoa npm run e2e:live` returned `ok: true` against real Bluesky + GtS + Mastodon through `https://should-only-velocity-letters.trycloudflare.com`.
-- Confirmed served actor `type: "Service"`, remote account API `bot: true` on both receivers, original Bluesky profile/post URLs exposed where receivers support them while AP URI fetch/import still works, follow/unfollow/refollow state transitions update bridge followers as expected on both receivers, Jetstream sharded into 2 live connections with one wanted DID each, thread/media posts arrive as `unlisted`, Mastodon accepts quote posts, profile description changes fan out as AP actor `Update`, and labeled media maps to reason-only CW plus sensitive media state.
+- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS + Mastodon through `https://return-decorating-travesti-lobby.trycloudflare.com`.
+- Confirmed served actor `type: "Service"`, remote account API `bot: true` on both receivers, original Bluesky profile/post URLs exposed where receivers support them while AP URI fetch/import still works, follow/unfollow/refollow state transitions update bridge followers as expected on both receivers, same-tunnel bridge restart still delivers a new post to both receivers, thread/media posts arrive as `unlisted`, Mastodon accepts quote posts of the test bot's own root post, profile description changes fan out as AP actor `Update`, labeled media maps to reason-only CW plus sensitive media state, repost delivery still works, and delivery queue drains to zero.
 
 Do not mark live federation work complete unless the live harness passes or the failure is intentionally documented with artifacts.
 

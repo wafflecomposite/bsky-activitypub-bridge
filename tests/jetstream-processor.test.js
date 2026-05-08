@@ -461,7 +461,8 @@ test("JetstreamProcessor maps repost create to Announce activity", () => {
   assert.equal(queued.activity.type, "Announce");
   assert.equal(queued.activity.object, "https://bridge.example/ap/object/did%3Aplc%3Abob/post9");
 
-  const cached = store.getObjectByRkey("did:plc:alice", "app.bsky.feed.repost:rp1");
+  const cached = store.getObjectByRkey("did:plc:alice", "repost:rp1");
+  assert.equal(cached?.object?.type, "Announce");
   assert.equal(cached?.activity?.type, "Announce");
 });
 

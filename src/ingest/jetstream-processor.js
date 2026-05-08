@@ -2,7 +2,7 @@ import { buildActorDocument } from "../ap/actor.js";
 import { blueskyBlobUrl } from "../bsky/web-url.js";
 import { InMemoryKeyManager } from "../crypto/key-manager.js";
 import { actorId, objectId } from "../domain/identifiers.js";
-import { buildAudience, mapBskyPostToActivityPub, parseAtPostUri } from "../bridge/post-mapper.js";
+import { buildAudience, mapBskyPostToActivityPub, mapBskyRepostToActivityPub } from "../bridge/post-mapper.js";
 import { planDeliveryTargets } from "../delivery/recipient-planner.js";
 
 export class JetstreamProcessor {
@@ -394,8 +394,10 @@ function persistMappedActivity({ store, did, rkey, collection, operation, activi
 
   const cacheKey = collection === "app.bsky.feed.post"
     ? rkey
-    : `${collection}:${rkey}`;
-  const object = activity?.object && typeof activity.object === "object"
+    : `repost:${rkey}`;
+  const object = collection === "app.bsky.feed.repost" && activity?.type === "Announce"
+    ? activity
+    : activity?.object && typeof activity.object === "object"
     ? activity.object
     : null;
 
@@ -507,15 +509,13 @@ function mapRepostEventToActivity({ baseUrl, did, rkey, operation, record, visib
     };
   }
 
-  const subjectUri = record?.subject?.uri;
-  if (typeof subjectUri !== "string") {
-    throw new Error("Jetstream repost missing subject.uri");
-  }
-
-  const parsed = parseAtPostUri(subjectUri);
-  const objectRef = parsed
-    ? objectId(baseUrl, parsed.did, parsed.rkey)
-    : subjectUri;
+  const mapped = mapBskyRepostToActivityPub({
+    baseUrl,
+    did,
+    rkey,
+    record,
+    visibility
+  });
 
   if (operation === "update") {
     return {
@@ -530,19 +530,10 @@ function mapRepostEventToActivity({ baseUrl, did, rkey, operation, record, visib
         type: "Announce",
         actor,
         published: typeof record?.createdAt === "string" ? record.createdAt : undefined,
-        object: objectRef
+        object: mapped.announce.object
       }
     };
   }
 
-  return {
-    "@context": "https://www.w3.org/ns/activitystreams",
-    id: `${announceObjectId}/activity/announce`,
-    type: "Announce",
-    actor,
-    published: typeof record?.createdAt === "string" ? record.createdAt : undefined,
-    to: audience.to,
-    cc: audience.cc,
-    object: objectRef
-  };
+  return mapped.announce;
 }

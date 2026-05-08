@@ -3,6 +3,11 @@ import { writeFile as writeFileAsync, mkdir as mkdirAsync } from "node:fs/promis
 import { dirname } from "node:path";
 import { assertDid, assertHandle } from "../domain/identifiers.js";
 
+const DEFAULT_OBJECT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_TOMBSTONE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DEFAULT_OBJECT_CACHE_MAX_RECORDS = 50_000;
+const DEFAULT_PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
 export class FileBridgeStore {
   #filePath;
   #persistMode;
@@ -11,12 +16,26 @@ export class FileBridgeStore {
   #didByHandle = new Map();
   #followersByDid = new Map();
   #recordsByDid = new Map();
+  #objectCacheTtlMs;
+  #tombstoneCacheTtlMs;
+  #objectCacheMaxRecords;
+  #profileCacheTtlMs;
+  #now;
   #persistTimer = null;
   #persistDirty = false;
   #persistWriteQueued = false;
   #persistWritePromise = null;
 
-  constructor({ filePath, persistMode = "sync", persistDebounceMs = 50 }) {
+  constructor({
+    filePath,
+    persistMode = "sync",
+    persistDebounceMs = 50,
+    objectCacheTtlMs = DEFAULT_OBJECT_CACHE_TTL_MS,
+    tombstoneCacheTtlMs = DEFAULT_TOMBSTONE_CACHE_TTL_MS,
+    objectCacheMaxRecords = DEFAULT_OBJECT_CACHE_MAX_RECORDS,
+    profileCacheTtlMs = DEFAULT_PROFILE_CACHE_TTL_MS,
+    now = () => Date.now()
+  }) {
     if (!filePath) {
       throw new Error("FileBridgeStore requires filePath");
     }
@@ -24,6 +43,11 @@ export class FileBridgeStore {
     this.#filePath = filePath;
     this.#persistMode = persistMode === "async" ? "async" : "sync";
     this.#persistDebounceMs = normalizePersistDebounceMs(persistDebounceMs);
+    this.#objectCacheTtlMs = normalizeDurationMs(objectCacheTtlMs, DEFAULT_OBJECT_CACHE_TTL_MS);
+    this.#tombstoneCacheTtlMs = normalizeDurationMs(tombstoneCacheTtlMs, DEFAULT_TOMBSTONE_CACHE_TTL_MS);
+    this.#objectCacheMaxRecords = normalizeMaxRecords(objectCacheMaxRecords, DEFAULT_OBJECT_CACHE_MAX_RECORDS);
+    this.#profileCacheTtlMs = normalizeDurationMs(profileCacheTtlMs, DEFAULT_PROFILE_CACHE_TTL_MS);
+    this.#now = typeof now === "function" ? now : () => Date.now();
     this.#load();
   }
 
@@ -32,6 +56,8 @@ export class FileBridgeStore {
     const handle = assertHandle(actor.handle);
     const existing = this.#actorsByDid.get(did) ?? null;
     const hasOwn = (key) => Object.prototype.hasOwnProperty.call(actor, key);
+    const nowIso = this.#nowIso();
+    const hasProfileFields = actorHasProfileFields(actor) || hasOwn("profileFetchedAt");
 
     const normalized = {
       did,
@@ -44,7 +70,8 @@ export class FileBridgeStore {
       profileFetchedAt: hasOwn("profileFetchedAt")
         ? normalizeOptionalIsoString(actor.profileFetchedAt)
         : existing?.profileFetchedAt ?? null,
-      updatedAt: new Date().toISOString()
+      profileLastAccessedAt: hasProfileFields ? nowIso : existing?.profileLastAccessedAt ?? null,
+      updatedAt: nowIso
     };
 
     if (existing?.handle && existing.handle !== handle) {
@@ -59,7 +86,12 @@ export class FileBridgeStore {
   }
 
   getActorByDid(did) {
-    return this.#actorsByDid.get(assertDid(did)) ?? null;
+    const actor = this.#actorsByDid.get(assertDid(did)) ?? null;
+    if (actor && this.#touchActor(actor)) {
+      this.#persist();
+    }
+
+    return actor;
   }
 
   resolveDidByHandle(handle) {
@@ -82,8 +114,8 @@ export class FileBridgeStore {
       actorId: followerActorId,
       inboxUrl: follower.inboxUrl ?? existing?.inboxUrl ?? null,
       sharedInboxUrl: follower.sharedInboxUrl ?? existing?.sharedInboxUrl ?? null,
-      followedAt: existing?.followedAt ?? new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      followedAt: existing?.followedAt ?? this.#nowIso(),
+      updatedAt: this.#nowIso(),
       lastFollowActivityId: follower.followActivityId ?? existing?.lastFollowActivityId ?? null
     };
 
@@ -152,7 +184,8 @@ export class FileBridgeStore {
       this.#recordsByDid.set(actorDid, records);
     }
 
-    const nowIso = new Date().toISOString();
+    const nowMs = this.#now();
+    const nowIso = isoFromMs(nowMs);
     const next = {
       rkey: normalizedRkey,
       operation: normalizedOperation,
@@ -163,10 +196,14 @@ export class FileBridgeStore {
         ? cursor
         : existing?.cursor ?? null,
       publishedAt: readPublishedAt(object, activity) ?? existing?.publishedAt ?? nowIso,
+      cachedAt: existing?.cachedAt ?? nowIso,
+      lastAccessedAt: nowIso,
+      deletedAt: normalizedOperation === "delete" ? existing?.deletedAt ?? nowIso : null,
       updatedAt: nowIso
     };
 
     records.set(normalizedRkey, next);
+    this.#pruneObjectCache(nowMs);
     this.#persist();
     return next;
   }
@@ -180,7 +217,25 @@ export class FileBridgeStore {
       return null;
     }
 
-    return records.get(normalizedRkey) ?? null;
+    const record = records.get(normalizedRkey) ?? null;
+    if (!record) {
+      return null;
+    }
+
+    const nowMs = this.#now();
+    if (isObjectExpired(record, nowMs, {
+      objectCacheTtlMs: this.#objectCacheTtlMs,
+      tombstoneCacheTtlMs: this.#tombstoneCacheTtlMs
+    })) {
+      records.delete(normalizedRkey);
+      this.#deleteEmptyRecordMap(actorDid, records);
+      this.#persist();
+      return null;
+    }
+
+    record.lastAccessedAt = isoFromMs(nowMs);
+    this.#persist();
+    return record;
   }
 
   listOutboxActivities(did, { limit = 20 } = {}) {
@@ -190,11 +245,21 @@ export class FileBridgeStore {
       return [];
     }
 
-    return Array.from(records.values())
+    const nowMs = this.#now();
+    this.#pruneObjectCache(nowMs);
+
+    const items = Array.from(records.values())
       .filter((entry) => entry.activity && typeof entry.activity === "object")
       .sort((a, b) => compareIsoDatesDesc(a.publishedAt, b.publishedAt))
-      .slice(0, normalizeLimit(limit))
-      .map((entry) => entry.activity);
+      .slice(0, normalizeLimit(limit));
+
+    const nowIso = isoFromMs(nowMs);
+    for (const entry of items) {
+      entry.lastAccessedAt = nowIso;
+    }
+    this.#persist();
+
+    return items.map((entry) => entry.activity);
   }
 
   countOutboxActivities(did) {
@@ -204,6 +269,11 @@ export class FileBridgeStore {
       return 0;
     }
 
+    const pruned = this.#pruneObjectCache(this.#now());
+    if (pruned.objectsRemoved > 0) {
+      this.#persist();
+    }
+
     let total = 0;
     for (const entry of records.values()) {
       if (entry.activity && typeof entry.activity === "object") {
@@ -211,6 +281,33 @@ export class FileBridgeStore {
       }
     }
     return total;
+  }
+
+  pruneCache({
+    objectCacheTtlMs = this.#objectCacheTtlMs,
+    tombstoneCacheTtlMs = this.#tombstoneCacheTtlMs,
+    objectCacheMaxRecords = this.#objectCacheMaxRecords,
+    profileCacheTtlMs = this.#profileCacheTtlMs
+  } = {}) {
+    const objectPolicy = {
+      objectCacheTtlMs: normalizeDurationMs(objectCacheTtlMs, this.#objectCacheTtlMs),
+      tombstoneCacheTtlMs: normalizeDurationMs(tombstoneCacheTtlMs, this.#tombstoneCacheTtlMs),
+      objectCacheMaxRecords: normalizeMaxRecords(objectCacheMaxRecords, this.#objectCacheMaxRecords)
+    };
+    const profileTtlMs = normalizeDurationMs(profileCacheTtlMs, this.#profileCacheTtlMs);
+    const nowMs = this.#now();
+    const objectResult = this.#pruneObjectCache(nowMs, objectPolicy);
+    const actorResult = this.#pruneActorCache(nowMs, profileTtlMs);
+
+    if (objectResult.objectsRemoved > 0 || actorResult.profilesCleared > 0 || actorResult.actorsRemoved > 0) {
+      this.#persist();
+    }
+
+    return {
+      objectsRemoved: objectResult.objectsRemoved,
+      profilesCleared: actorResult.profilesCleared,
+      actorsRemoved: actorResult.actorsRemoved
+    };
   }
 
   async flush() {
@@ -292,6 +389,99 @@ export class FileBridgeStore {
 
       this.#recordsByDid.set(assertDid(did), map);
     }
+  }
+
+  #pruneObjectCache(nowMs, {
+    objectCacheTtlMs = this.#objectCacheTtlMs,
+    tombstoneCacheTtlMs = this.#tombstoneCacheTtlMs,
+    objectCacheMaxRecords = this.#objectCacheMaxRecords
+  } = {}) {
+    let objectsRemoved = 0;
+
+    for (const [did, records] of this.#recordsByDid.entries()) {
+      for (const [rkey, record] of records.entries()) {
+        if (isObjectExpired(record, nowMs, { objectCacheTtlMs, tombstoneCacheTtlMs })) {
+          records.delete(rkey);
+          objectsRemoved += 1;
+        }
+      }
+      this.#deleteEmptyRecordMap(did, records);
+    }
+
+    const allRecords = [];
+    for (const [did, records] of this.#recordsByDid.entries()) {
+      for (const [rkey, record] of records.entries()) {
+        allRecords.push({
+          did,
+          rkey,
+          record,
+          lastAccessedMs: recordAccessTime(record)
+        });
+      }
+    }
+
+    if (allRecords.length > objectCacheMaxRecords) {
+      allRecords.sort((a, b) => a.lastAccessedMs - b.lastAccessedMs);
+      const removeCount = allRecords.length - objectCacheMaxRecords;
+      for (const entry of allRecords.slice(0, removeCount)) {
+        const records = this.#recordsByDid.get(entry.did);
+        if (records?.delete(entry.rkey)) {
+          objectsRemoved += 1;
+          this.#deleteEmptyRecordMap(entry.did, records);
+        }
+      }
+    }
+
+    return { objectsRemoved };
+  }
+
+  #pruneActorCache(nowMs, profileCacheTtlMs) {
+    let profilesCleared = 0;
+    let actorsRemoved = 0;
+
+    for (const [did, actor] of [...this.#actorsByDid.entries()]) {
+      if (hasCachedProfile(actor) && isProfileExpired(actor, nowMs, profileCacheTtlMs)) {
+        clearCachedProfile(actor);
+        actor.updatedAt = isoFromMs(nowMs);
+        profilesCleared += 1;
+      }
+
+      const hasFollowers = (this.#followersByDid.get(did)?.size ?? 0) > 0;
+      const hasRecords = (this.#recordsByDid.get(did)?.size ?? 0) > 0;
+      if (!hasFollowers && !hasRecords && !hasCachedProfile(actor) && isActorIdentityExpired(actor, nowMs, profileCacheTtlMs)) {
+        this.#actorsByDid.delete(did);
+        if (actor.handle) {
+          this.#didByHandle.delete(actor.handle);
+        }
+        actorsRemoved += 1;
+      }
+    }
+
+    return { profilesCleared, actorsRemoved };
+  }
+
+  #touchActor(actor) {
+    if (!hasCachedProfile(actor)) {
+      return false;
+    }
+
+    const nowIso = this.#nowIso();
+    if (actor.profileLastAccessedAt === nowIso) {
+      return false;
+    }
+
+    actor.profileLastAccessedAt = nowIso;
+    return true;
+  }
+
+  #deleteEmptyRecordMap(did, records) {
+    if (records.size === 0) {
+      this.#recordsByDid.delete(did);
+    }
+  }
+
+  #nowIso() {
+    return isoFromMs(this.#now());
   }
 
   #persist() {
@@ -458,6 +648,104 @@ function normalizePersistDebounceMs(value) {
   }
 
   return 50;
+}
+
+function normalizeDurationMs(value, fallback) {
+  if (value === null) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(Math.trunc(value), 0);
+  }
+
+  return fallback;
+}
+
+function normalizeMaxRecords(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(Math.trunc(value), 0);
+  }
+
+  return fallback;
+}
+
+function isObjectExpired(record, nowMs, { objectCacheTtlMs, tombstoneCacheTtlMs }) {
+  const ttlMs = record?.deleted ? tombstoneCacheTtlMs : objectCacheTtlMs;
+  if (!Number.isFinite(ttlMs)) {
+    return false;
+  }
+
+  const anchorMs = recordAccessTime(record);
+  return Number.isFinite(anchorMs) && nowMs - anchorMs > ttlMs;
+}
+
+function recordAccessTime(record) {
+  return parseIsoMs(record?.lastAccessedAt)
+    ?? parseIsoMs(record?.updatedAt)
+    ?? parseIsoMs(record?.publishedAt)
+    ?? parseIsoMs(record?.cachedAt)
+    ?? 0;
+}
+
+function actorHasProfileFields(actor) {
+  return Object.prototype.hasOwnProperty.call(actor, "displayName")
+    || Object.prototype.hasOwnProperty.call(actor, "summary")
+    || Object.prototype.hasOwnProperty.call(actor, "avatarUrl")
+    || Object.prototype.hasOwnProperty.call(actor, "bannerUrl")
+    || Object.prototype.hasOwnProperty.call(actor, "pinnedPostUri");
+}
+
+function hasCachedProfile(actor) {
+  return actor?.displayName != null
+    || actor?.summary != null
+    || actor?.avatarUrl != null
+    || actor?.bannerUrl != null
+    || actor?.pinnedPostUri != null
+    || actor?.profileFetchedAt != null;
+}
+
+function isProfileExpired(actor, nowMs, ttlMs) {
+  if (!Number.isFinite(ttlMs)) {
+    return false;
+  }
+
+  const anchorMs = parseIsoMs(actor?.profileLastAccessedAt)
+    ?? parseIsoMs(actor?.profileFetchedAt)
+    ?? parseIsoMs(actor?.updatedAt);
+  return Number.isFinite(anchorMs) && nowMs - anchorMs > ttlMs;
+}
+
+function isActorIdentityExpired(actor, nowMs, ttlMs) {
+  if (!Number.isFinite(ttlMs)) {
+    return false;
+  }
+
+  const anchorMs = parseIsoMs(actor?.updatedAt);
+  return Number.isFinite(anchorMs) && nowMs - anchorMs > ttlMs;
+}
+
+function clearCachedProfile(actor) {
+  actor.displayName = null;
+  actor.summary = null;
+  actor.avatarUrl = null;
+  actor.bannerUrl = null;
+  actor.pinnedPostUri = null;
+  actor.profileFetchedAt = null;
+  actor.profileLastAccessedAt = null;
+}
+
+function isoFromMs(value) {
+  return new Date(value).toISOString();
+}
+
+function parseIsoMs(value) {
+  if (typeof value !== "string" || !value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 async function persistSnapshotAsync(filePath, payload) {

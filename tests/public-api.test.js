@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getPostRecord, getProfile, resolveHandleToDid } from "../src/bsky/public-api.js";
+import { getPostRecord, getProfile, getRepostRecord, resolveHandleToDid } from "../src/bsky/public-api.js";
 
 test("resolveHandleToDid normalizes and returns DID", async () => {
   const did = await resolveHandleToDid({
@@ -106,4 +106,36 @@ test("getPostRecord returns post record payload", async () => {
 
   assert.equal(record.uri, "at://did:plc:alice123/app.bsky.feed.post/abc1");
   assert.equal(record.value.text, "hello");
+});
+
+test("getRepostRecord returns repost record payload", async () => {
+  const record = await getRepostRecord({
+    did: "did:plc:alice123",
+    rkey: "rp1",
+    fetchImpl: async (url) => {
+      assert.equal(
+        url,
+        "https://public.api.bsky.app/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Aalice123&collection=app.bsky.feed.repost&rkey=rp1"
+      );
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          uri: "at://did:plc:alice123/app.bsky.feed.repost/rp1",
+          cid: "cid-rp1",
+          value: {
+            $type: "app.bsky.feed.repost",
+            createdAt: "2026-03-04T00:00:00.000Z",
+            subject: {
+              uri: "at://did:plc:bob/app.bsky.feed.post/post9",
+              cid: "cid-post9"
+            }
+          }
+        })
+      };
+    }
+  });
+
+  assert.equal(record.uri, "at://did:plc:alice123/app.bsky.feed.repost/rp1");
+  assert.equal(record.value.subject.uri, "at://did:plc:bob/app.bsky.feed.post/post9");
 });

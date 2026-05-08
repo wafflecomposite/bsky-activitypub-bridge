@@ -13,6 +13,13 @@ const app = createBridgeApplication({
   postVisibility: process.env.BRIDGE_POST_VISIBILITY ?? "unlisted",
   profileCacheMaxAgeMs: parseInteger(process.env.PROFILE_CACHE_MAX_AGE_MS, 60_000),
   signatureMaxAgeSeconds: parseInteger(process.env.INBOX_SIGNATURE_MAX_AGE_SECONDS, 300),
+  cache: {
+    objectCacheTtlMs: parseInteger(process.env.OBJECT_CACHE_TTL_MS, 7 * 24 * 60 * 60 * 1000),
+    tombstoneCacheTtlMs: parseInteger(process.env.TOMBSTONE_CACHE_TTL_MS, 30 * 24 * 60 * 60 * 1000),
+    objectCacheMaxRecords: parseInteger(process.env.OBJECT_CACHE_MAX_RECORDS, 50_000),
+    profileCacheTtlMs: parseInteger(process.env.PROFILE_CACHE_TTL_MS, 24 * 60 * 60 * 1000),
+    pruneIntervalMs: parseInteger(process.env.CACHE_PRUNE_INTERVAL_MS, 5 * 60 * 1000)
+  },
   followLogger: isDebugLogEnabled(process.env.BRIDGE_DEBUG_LOGS, "follow")
     ? (event) => {
         console.info(`[bridge-follow] ${JSON.stringify(event)}`);

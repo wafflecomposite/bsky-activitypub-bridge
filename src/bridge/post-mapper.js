@@ -191,6 +191,40 @@ export function buildAudience({ baseUrl, did, visibility = DEFAULT_VISIBILITY })
   throw new Error(`Unsupported visibility: ${visibility}`);
 }
 
+export function mapBskyRepostToActivityPub({
+  baseUrl,
+  did,
+  rkey,
+  record,
+  visibility = DEFAULT_VISIBILITY
+}) {
+  const actor = actorId(baseUrl, did);
+  const announceObjectId = objectId(baseUrl, did, `repost:${rkey}`);
+  const audience = buildAudience({ baseUrl, did, visibility });
+  const subjectUri = record?.subject?.uri;
+  if (typeof subjectUri !== "string") {
+    throw new Error("Repost record missing subject.uri");
+  }
+
+  const parsed = parseAtPostUri(subjectUri);
+  const objectRef = parsed
+    ? objectId(baseUrl, parsed.did, parsed.rkey)
+    : subjectUri;
+
+  const announce = {
+    "@context": ACTIVITYSTREAMS_CONTEXT,
+    id: `${announceObjectId}/activity/announce`,
+    type: "Announce",
+    actor,
+    published: typeof record?.createdAt === "string" ? record.createdAt : undefined,
+    to: audience.to,
+    cc: audience.cc,
+    object: objectRef
+  };
+
+  return { announce };
+}
+
 function renderContentWithFacets({ text, facets = [], baseUrl }) {
   const boundaryMap = createUtf8BoundaryMap(text);
   const totalBytes = utf8ByteLength(text);
@@ -594,7 +628,7 @@ function mapReplyUriToActivityPubReference({ uri, baseUrl, currentDid, resolveRe
     }
   }
 
-  if (parsed && parsed.did === currentDid) {
+  if (parsed) {
     return objectId(baseUrl, parsed.did, parsed.rkey);
   }
 

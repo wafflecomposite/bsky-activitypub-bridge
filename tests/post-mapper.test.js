@@ -126,7 +126,7 @@ test("mapBskyPostToActivityPub maps reply and labels", () => {
     }
   });
 
-  assert.equal(result.note.inReplyTo, "https://bsky.app/profile/did:plc:bob/post/xyz");
+  assert.equal(result.note.inReplyTo, "https://bridge.example/ap/object/did%3Aplc%3Abob/xyz");
   assert.equal(result.note.sensitive, true);
   assert.equal(result.note.summary, "Adult Content");
 });

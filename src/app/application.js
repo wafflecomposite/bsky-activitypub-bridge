@@ -29,15 +29,25 @@ export function createBridgeApplication({
   timers = globalThis,
   jetstream = {},
   delivery = {},
+  cache = {},
   createServer = createBridgeServer,
   followLogger = null
 } = {}) {
   const resolvedStore = store ?? (dataDir
     ? new FileBridgeStore({
       filePath: join(dataDir, "store.json"),
-      persistMode: "async"
+      persistMode: "async",
+      objectCacheTtlMs: cache.objectCacheTtlMs,
+      tombstoneCacheTtlMs: cache.tombstoneCacheTtlMs,
+      objectCacheMaxRecords: cache.objectCacheMaxRecords,
+      profileCacheTtlMs: cache.profileCacheTtlMs
     })
-    : new InMemoryBridgeStore());
+    : new InMemoryBridgeStore({
+      objectCacheTtlMs: cache.objectCacheTtlMs,
+      tombstoneCacheTtlMs: cache.tombstoneCacheTtlMs,
+      objectCacheMaxRecords: cache.objectCacheMaxRecords,
+      profileCacheTtlMs: cache.profileCacheTtlMs
+    }));
 
   const resolvedState = state ?? (dataDir
     ? new FileJetstreamState({
@@ -83,6 +93,7 @@ export function createBridgeApplication({
 
   let runtime = null;
   let deliveryInterval = null;
+  let cachePruneInterval = null;
 
   async function start({ host = "127.0.0.1", port = 3000 } = {}) {
     const address = await server.start({ host, port });
@@ -122,6 +133,21 @@ export function createBridgeApplication({
       });
     }
 
+    if (typeof resolvedStore.pruneCache === "function") {
+      resolvedStore.pruneCache();
+    }
+
+    const pruneIntervalMs = cache.pruneIntervalMs ?? 5 * 60 * 1000;
+    if (pruneIntervalMs > 0 && typeof timers.setInterval === "function" && typeof resolvedStore.pruneCache === "function") {
+      cachePruneInterval = timers.setInterval(() => {
+        try {
+          resolvedStore.pruneCache();
+        } catch {
+          // Best effort cache cleanup.
+        }
+      }, pruneIntervalMs);
+    }
+
     const drainIntervalMs = delivery.drainIntervalMs ?? 1000;
     if (drainIntervalMs > 0 && typeof timers.setInterval === "function") {
       deliveryInterval = timers.setInterval(() => {
@@ -140,6 +166,11 @@ export function createBridgeApplication({
     if (deliveryInterval) {
       timers.clearInterval(deliveryInterval);
       deliveryInterval = null;
+    }
+
+    if (cachePruneInterval) {
+      timers.clearInterval(cachePruneInterval);
+      cachePruneInterval = null;
     }
 
     if (runtime) {

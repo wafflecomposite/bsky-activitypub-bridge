@@ -51,13 +51,35 @@ export async function getProfile({ actor, fetchImpl = fetch }) {
 }
 
 export async function getPostRecord({ did, rkey, fetchImpl = fetch }) {
+  return getRepoRecord({
+    did,
+    collection: "app.bsky.feed.post",
+    rkey,
+    fetchImpl
+  });
+}
+
+export async function getRepostRecord({ did, rkey, fetchImpl = fetch }) {
+  return getRepoRecord({
+    did,
+    collection: "app.bsky.feed.repost",
+    rkey,
+    fetchImpl
+  });
+}
+
+export async function getRepoRecord({ did, collection, rkey, fetchImpl = fetch }) {
   const actorDid = assertDid(did);
+  if (typeof collection !== "string" || !collection.trim()) {
+    throw new Error("Invalid record collection");
+  }
+
   if (typeof rkey !== "string" || !rkey.trim()) {
-    throw new Error("Invalid post rkey");
+    throw new Error("Invalid record rkey");
   }
 
   const response = await fetchImpl(
-    `${PUBLIC_API_BASE}/com.atproto.repo.getRecord?repo=${encodeURIComponent(actorDid)}&collection=app.bsky.feed.post&rkey=${encodeURIComponent(rkey)}`,
+    `${PUBLIC_API_BASE}/com.atproto.repo.getRecord?repo=${encodeURIComponent(actorDid)}&collection=${encodeURIComponent(collection)}&rkey=${encodeURIComponent(rkey)}`,
     {
       method: "GET",
       headers: {

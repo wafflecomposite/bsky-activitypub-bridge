@@ -90,6 +90,85 @@ test("FileBridgeStore persists object cache and outbox activity list", () => {
   }
 });
 
+test("FileBridgeStore persists object cache pruning", () => {
+  const dir = mkdtempSync(join(tmpdir(), "bridge-store-"));
+  const filePath = join(dir, "store.json");
+  let now = Date.parse("2026-03-04T00:00:00.000Z");
+
+  try {
+    const store1 = new FileBridgeStore({
+      filePath,
+      objectCacheTtlMs: 1000,
+      now: () => now
+    });
+    store1.upsertObjectActivity({
+      did: "did:plc:alice",
+      rkey: "old-post",
+      operation: "create",
+      object: {
+        id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/old-post",
+        type: "Note",
+        published: "2026-03-04T00:00:00.000Z"
+      },
+      activity: {
+        id: "https://bridge.example/ap/object/did%3Aplc%3Aalice/old-post/activity/create",
+        type: "Create",
+        published: "2026-03-04T00:00:00.000Z"
+      }
+    });
+
+    now += 1001;
+    const result = store1.pruneCache();
+    assert.equal(result.objectsRemoved, 1);
+
+    const store2 = new FileBridgeStore({ filePath });
+    assert.equal(store2.getObjectByRkey("did:plc:alice", "old-post"), null);
+    assert.equal(store2.countOutboxActivities("did:plc:alice"), 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("FileBridgeStore clears stale profile details without removing followed actors", () => {
+  const dir = mkdtempSync(join(tmpdir(), "bridge-store-"));
+  const filePath = join(dir, "store.json");
+  let now = Date.parse("2026-03-04T00:00:00.000Z");
+
+  try {
+    const store1 = new FileBridgeStore({
+      filePath,
+      profileCacheTtlMs: 1000,
+      now: () => now
+    });
+    store1.upsertActor({
+      did: "did:plc:alice",
+      handle: "alice.bsky.social",
+      displayName: "Alice",
+      summary: "bio",
+      avatarUrl: "https://cdn.example/avatar.jpg",
+      profileFetchedAt: "2026-03-04T00:00:00.000Z"
+    });
+    store1.addFollower("did:plc:alice", {
+      actorId: "https://remote.example/users/bob",
+      inboxUrl: "https://remote.example/users/bob/inbox"
+    });
+
+    now += 1001;
+    const result = store1.pruneCache();
+    assert.equal(result.profilesCleared, 1);
+
+    const store2 = new FileBridgeStore({ filePath });
+    const actor = store2.getActorByDid("did:plc:alice");
+    assert.equal(actor.handle, "alice.bsky.social");
+    assert.equal(actor.displayName, null);
+    assert.equal(actor.summary, null);
+    assert.equal(actor.avatarUrl, null);
+    assert.equal(store2.listFollowers("did:plc:alice").length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("FileBridgeStore preserves profile fields on partial actor upsert", () => {
   const dir = mkdtempSync(join(tmpdir(), "bridge-store-"));
   const filePath = join(dir, "store.json");

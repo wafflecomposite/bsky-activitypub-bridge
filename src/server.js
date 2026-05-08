@@ -4,9 +4,9 @@ import { buildActorDocument } from "./ap/actor.js";
 import { processInboxActivity } from "./ap/follow.js";
 import { resolveFollowerEndpoints } from "./ap/remote-actor.js";
 import { resolveWebFingerResource } from "./ap/webfinger.js";
-import { getPostRecord, getProfile, resolveHandleToDid } from "./bsky/public-api.js";
+import { getPostRecord, getProfile, getRepostRecord, resolveHandleToDid } from "./bsky/public-api.js";
 import { blueskyPostUrl, blueskyProfileUrl } from "./bsky/web-url.js";
-import { mapBskyPostToActivityPub, parseAtPostUri } from "./bridge/post-mapper.js";
+import { mapBskyPostToActivityPub, mapBskyRepostToActivityPub, parseAtPostUri } from "./bridge/post-mapper.js";
 import { InMemoryKeyManager } from "./crypto/key-manager.js";
 import { parseDiscoveryInput } from "./discovery/input-parser.js";
 import {
@@ -809,6 +809,28 @@ async function ensurePostRecord({ store, fetchImpl, baseUrl, did, rkey }) {
     if (cached) {
       return cached;
     }
+
+    if (rkey.startsWith("repost:")) {
+      const legacyCached = store.getObjectByRkey(did, `app.bsky.feed.repost:${rkey.slice("repost:".length)}`);
+      if (legacyCached) {
+        return legacyCached.object
+          ? legacyCached
+          : {
+              ...legacyCached,
+              object: legacyCached.activity?.type === "Announce" ? legacyCached.activity : null
+            };
+      }
+    }
+  }
+
+  if (rkey.startsWith("repost:")) {
+    return ensureRepostRecord({
+      store,
+      fetchImpl,
+      baseUrl,
+      did,
+      rkey: rkey.slice("repost:".length)
+    });
   }
 
   let record;
@@ -824,13 +846,7 @@ async function ensurePostRecord({ store, fetchImpl, baseUrl, did, rkey }) {
     rkey,
     record: record.value,
     visibility: "unlisted",
-    resolveReplyObjectId: (replyDid, replyRkey) => {
-      const cached = typeof store.getObjectByRkey === "function"
-        ? store.getObjectByRkey(replyDid, replyRkey)
-        : null;
-
-      return cached && !cached.deleted ? objectId(baseUrl, replyDid, replyRkey) : null;
-    }
+    resolveReplyObjectId: (replyDid, replyRkey) => objectId(baseUrl, replyDid, replyRkey)
   });
 
   if (typeof store.upsertObjectActivity !== "function") {
@@ -847,6 +863,40 @@ async function ensurePostRecord({ store, fetchImpl, baseUrl, did, rkey }) {
     operation: "create",
     object: mapped.note,
     activity: mapped.create,
+    cursor: null
+  });
+}
+
+async function ensureRepostRecord({ store, fetchImpl, baseUrl, did, rkey }) {
+  let record;
+  try {
+    record = await getRepostRecord({ did, rkey, fetchImpl });
+  } catch {
+    return null;
+  }
+
+  const mapped = mapBskyRepostToActivityPub({
+    baseUrl,
+    did,
+    rkey,
+    record: record.value,
+    visibility: "unlisted"
+  });
+
+  if (typeof store.upsertObjectActivity !== "function") {
+    return {
+      object: mapped.announce,
+      activity: mapped.announce,
+      deleted: false
+    };
+  }
+
+  return store.upsertObjectActivity({
+    did,
+    rkey: `repost:${rkey}`,
+    operation: "create",
+    object: mapped.announce,
+    activity: mapped.announce,
     cursor: null
   });
 }

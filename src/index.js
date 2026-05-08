@@ -1,4 +1,5 @@
 import { createBridgeApplication } from "./app/application.js";
+import { isDebugLogEnabled } from "./config/debug-logs.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
 const port = parseInteger(process.env.PORT, 3000);
@@ -12,7 +13,7 @@ const app = createBridgeApplication({
   postVisibility: process.env.BRIDGE_POST_VISIBILITY ?? "unlisted",
   profileCacheMaxAgeMs: parseInteger(process.env.PROFILE_CACHE_MAX_AGE_MS, 60_000),
   signatureMaxAgeSeconds: parseInteger(process.env.INBOX_SIGNATURE_MAX_AGE_SECONDS, 300),
-  followLogger: parseBoolean(process.env.FOLLOW_DEBUG_LOGS, true)
+  followLogger: isDebugLogEnabled(process.env.BRIDGE_DEBUG_LOGS, "follow")
     ? (event) => {
         console.info(`[bridge-follow] ${JSON.stringify(event)}`);
       }

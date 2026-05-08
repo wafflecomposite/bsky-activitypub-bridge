@@ -21,7 +21,7 @@ ActivityPub surface:
 - WebFinger, actor, inbox, followers, following, featured, outbox, object, root resolver page, and `/api/resolve`.
 - Follow inbox accepts and stores followers, resolves remote actor inboxes, queues signed `Accept` delivery, and can enforce inbound legacy HTTP signatures.
 - Follow inbox also accepts `Undo` of `Follow` and removes followers so unfollow/refollow churn does not leave stale bridge subscription state.
-- `npm start` emits `[bridge-follow]` JSON diagnostics for follow inbox processing, remote actor endpoint resolution, Accept enqueue, Undo removal, and follow-Accept delivery results; set `FOLLOW_DEBUG_LOGS=0` to disable.
+- `npm start` can emit `[bridge-follow]` JSON diagnostics for follow inbox processing, remote actor endpoint resolution, Accept enqueue, Undo removal, and follow-Accept delivery results when `BRIDGE_DEBUG_LOGS=follow` or `BRIDGE_DEBUG_LOGS=all`; debug logs are disabled by default.
 - Follow inbox POSTs can lazy-materialize missing Bluesky actor profiles by DID before processing the Follow, which covers receivers that reuse a cached actor inbox after bridge storage was reset or the actor was not otherwise seeded.
 - Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, original Bluesky web URL, public key material, counters/collections, and featured collection link.
 - Bluesky profile commits for followed actors update stored actor profile fields and fan out ActivityPub actor `Update` activities.

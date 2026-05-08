@@ -9,13 +9,21 @@ export function processInboxActivity({ activity, targetDid, baseUrl, store }) {
     };
   }
 
-  if (activity.type !== "Follow") {
-    return {
-      status: 501,
-      body: { error: `Unsupported activity type: ${activity.type ?? "unknown"}` }
-    };
+  if (activity.type === "Follow") {
+    return processFollowActivity({ activity, targetDid, baseUrl, store });
   }
 
+  if (activity.type === "Undo") {
+    return processUndoActivity({ activity, targetDid, baseUrl, store });
+  }
+
+  return {
+    status: 501,
+    body: { error: `Unsupported activity type: ${activity.type ?? "unknown"}` }
+  };
+}
+
+function processFollowActivity({ activity, targetDid, baseUrl, store }) {
   const targetActorId = actorId(baseUrl, targetDid);
   const objectId = normalizeObjectId(activity.object);
 
@@ -55,6 +63,52 @@ export function processInboxActivity({ activity, targetDid, baseUrl, store }) {
   };
 }
 
+function processUndoActivity({ activity, targetDid, baseUrl, store }) {
+  const targetActorId = actorId(baseUrl, targetDid);
+  const undoActorId = normalizeActorId(activity.actor);
+  const undoObject = normalizeUndoObject(activity.object);
+
+  if (undoObject.type && undoObject.type !== "Follow") {
+    return {
+      status: 501,
+      body: { error: `Unsupported Undo object type: ${undoObject.type}` }
+    };
+  }
+
+  if (undoObject.actorId && undoObject.actorId !== undoActorId) {
+    return {
+      status: 400,
+      body: {
+        error: "Undo actor must match Follow actor",
+        expected: undoActorId,
+        received: undoObject.actorId
+      }
+    };
+  }
+
+  if (undoObject.objectId && undoObject.objectId !== targetActorId) {
+    return {
+      status: 400,
+      body: {
+        error: "Undo Follow object must target this actor",
+        expected: targetActorId,
+        received: undoObject.objectId
+      }
+    };
+  }
+
+  const follower = store.removeFollower(targetDid, undoActorId);
+  return {
+    status: 202,
+    body: {
+      status: "undone",
+      actorId: undoActorId,
+      removed: Boolean(follower),
+      follower
+    }
+  };
+}
+
 export function buildAcceptActivity({ targetActorId, follow }) {
   return {
     "@context": "https://www.w3.org/ns/activitystreams",
@@ -88,6 +142,23 @@ function normalizeObjectId(objectField) {
   }
 
   throw new Error("Follow object must be a string ID or object with id");
+}
+
+function normalizeUndoObject(objectField) {
+  if (typeof objectField === "string") {
+    return { id: objectField, type: null, actorId: null, objectId: null };
+  }
+
+  if (!objectField || typeof objectField !== "object") {
+    throw new Error("Undo object must be a Follow activity ID or object");
+  }
+
+  return {
+    id: typeof objectField.id === "string" ? objectField.id : null,
+    type: typeof objectField.type === "string" ? objectField.type : null,
+    actorId: objectField.actor ? normalizeActorId(objectField.actor) : null,
+    objectId: objectField.object ? normalizeObjectId(objectField.object) : null
+  };
 }
 
 function extractOptionalInbox(actorField) {

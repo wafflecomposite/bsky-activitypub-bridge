@@ -67,6 +67,7 @@ The automated harness:
 - verifies AP fetch paths still work for remote import despite browser-facing redirects
 - imports an unfollowed bridge object through GtS and Mastodon status search
 - discovers and follows the bridged account from GtS and Mastodon
+- verifies follow/unfollow/refollow lifecycle from GtS and Mastodon, including receiver relationship state and bridge followers collection updates
 - temporarily updates the Bluesky profile description and verifies both receivers get the ActivityPub actor `Update`, then restores the original profile
 - publishes a real Bluesky thread and verifies delivery/linkage plus `unlisted` visibility in both receivers
 - verifies bridge outbox/object endpoints for the thread, including unlisted ActivityPub addressing

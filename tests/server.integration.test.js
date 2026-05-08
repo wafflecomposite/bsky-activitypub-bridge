@@ -111,6 +111,49 @@ test("dispatchBridgeRequest handles WebFinger, actor document, and follow inbox"
   assert.equal(followersRes.body.totalItems, 1);
 });
 
+test("dispatchBridgeRequest accepts Undo Follow and removes follower", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+  const deliveryQueue = new InMemoryDeliveryQueue();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social"
+  });
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/bob",
+    inboxUrl: "https://remote.example/inbox"
+  });
+
+  const undoRes = await dispatchBridgeRequest({
+    method: "POST",
+    rawUrl: "/ap/actor/did%3Aplc%3Aalice/inbox",
+    headers: { host: "bridge.example" },
+    bodyText: JSON.stringify({
+      id: "https://remote.example/activities/undo-1",
+      type: "Undo",
+      actor: "https://remote.example/users/bob",
+      object: {
+        id: "https://remote.example/activities/follow-1",
+        type: "Follow",
+        actor: "https://remote.example/users/bob",
+        object: "https://bridge.example/ap/actor/did%3Aplc%3Aalice"
+      }
+    }),
+    store,
+    keyManager,
+    baseUrl,
+    deliveryQueue
+  });
+
+  assert.equal(undoRes.status, 202);
+  assert.equal(undoRes.body.status, "undone");
+  assert.equal(undoRes.body.removed, true);
+  assert.equal(store.listFollowers("did:plc:alice").length, 0);
+  assert.equal(deliveryQueue.size(), 0);
+});
+
 test("dispatchBridgeRequest redirects browser actor requests to Bluesky profile", async () => {
   const baseUrl = "https://bridge.example";
   const store = new InMemoryBridgeStore();

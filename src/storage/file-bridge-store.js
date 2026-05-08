@@ -93,6 +93,30 @@ export class FileBridgeStore {
     return normalized;
   }
 
+  removeFollower(did, actorId) {
+    const actorDid = assertDid(did);
+    const followerActorId = normalizeActorRef(actorId);
+    const followers = this.#followersByDid.get(actorDid);
+
+    if (!followers) {
+      return null;
+    }
+
+    const removed = followers.get(followerActorId) ?? null;
+    if (!removed) {
+      return null;
+    }
+
+    followers.delete(followerActorId);
+    if (followers.size === 0) {
+      this.#followersByDid.delete(actorDid);
+    }
+
+    this.#persist();
+
+    return removed;
+  }
+
   listFollowers(did) {
     const actorDid = assertDid(did);
     const followers = this.#followersByDid.get(actorDid);

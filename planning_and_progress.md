@@ -20,6 +20,7 @@ Runtime:
 ActivityPub surface:
 - WebFinger, actor, inbox, followers, following, featured, outbox, object, root resolver page, and `/api/resolve`.
 - Follow inbox accepts and stores followers, resolves remote actor inboxes, queues signed `Accept` delivery, and can enforce inbound legacy HTTP signatures.
+- Follow inbox also accepts `Undo` of `Follow` and removes followers so unfollow/refollow churn does not leave stale bridge subscription state.
 - Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, original Bluesky web URL, public key material, counters/collections, and featured collection link.
 - Bluesky profile commits for followed actors update stored actor profile fields and fan out ActivityPub actor `Update` activities.
 - Object/outbox endpoints serve cached or on-demand-materialized bridged posts; deleted objects return `Tombstone`.
@@ -53,15 +54,15 @@ Routine local verification:
 
 Last local verification on 2026-05-08:
 - `npm test` passed, 30/30 tests.
-- `npm run e2e:local` returned `ok: true` with `queuedUnlisted: true`.
+- `npm run e2e:local` returned `ok: true` with `queuedUnlisted: true`, `unfollowedIngestStatus: "no-followers"`, and `queueSizeAfterUnfollowedIngest: 0`.
 
 Live verification:
 - `npm run e2e:live`
 - `RUN_LIVE_E2E=1 npm run e2e:live:ci`
 
 Last live verification on 2026-05-08:
-- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS + Mastodon through `https://butter-publication-parks-sustained.trycloudflare.com`.
-- Confirmed served actor `type: "Service"`, remote account API `bot: true` on both receivers, original Bluesky profile/post URLs exposed where receivers support them while AP URI fetch/import still works, thread/media posts arrive as `unlisted`, Mastodon accepts quote posts, profile description changes fan out as AP actor `Update`, and labeled media maps to reason-only CW plus sensitive media state.
+- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS + Mastodon through `https://discharge-notes-modern-patio.trycloudflare.com`.
+- Confirmed served actor `type: "Service"`, remote account API `bot: true` on both receivers, original Bluesky profile/post URLs exposed where receivers support them while AP URI fetch/import still works, follow/unfollow/refollow state transitions update bridge followers as expected on both receivers, thread/media posts arrive as `unlisted`, Mastodon accepts quote posts, profile description changes fan out as AP actor `Update`, and labeled media maps to reason-only CW plus sensitive media state.
 
 Do not mark live federation work complete unless the live harness passes or the failure is intentionally documented with artifacts.
 
@@ -69,6 +70,7 @@ Do not mark live federation work complete unless the live harness passes or the 
 
 - A previous manual run captured thousands of unrelated DIDs in persistent storage, which indicates unscoped ingest happened at least once. Guardrails now exist, but this needs regression coverage that proves persistent storage does not grow from unrelated DIDs when no wanted DIDs are configured.
 - GtS/Mastodon follow state can remain `requested` during real-world runs. The live harness waits for `following=true`; any recurrence should be investigated from request logs and artifacts rather than assumed transient.
+- On 2026-05-08, live GtS had `add9575.bsky.social@bskytest1.sdu.li` stuck at `requested:true` while the bridge followers collection for `did:plc:7zhmr4wh5ombv6hxzfumbfmp` was empty. A controlled GtS API unfollow/follow retry then reached `following:true` and populated the bridge follower immediately, so the observed state was a stale pending GtS follow rather than a persistent bridge rejection.
 - JSON files are adequate for local/dev and live harness runs, but not the intended production durability layer.
 - Inbound RFC9421 verification is not implemented; current strict inbound mode is legacy signature verification.
 

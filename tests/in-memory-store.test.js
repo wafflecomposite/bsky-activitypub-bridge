@@ -19,6 +19,22 @@ test("InMemoryBridgeStore lists followed DIDs", () => {
   assert.deepEqual(store.listFollowedDids(), ["did:plc:alice", "did:plc:bob"]);
 });
 
+test("InMemoryBridgeStore removes followers and drops empty followed DIDs", () => {
+  const store = new InMemoryBridgeStore();
+  store.upsertActor({ did: "did:plc:alice", handle: "alice.bsky.social" });
+
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/r1",
+    inboxUrl: "https://remote.example/users/r1/inbox"
+  });
+
+  const removed = store.removeFollower("did:plc:alice", "https://remote.example/users/r1");
+  assert.equal(removed.actorId, "https://remote.example/users/r1");
+  assert.deepEqual(store.listFollowers("did:plc:alice"), []);
+  assert.deepEqual(store.listFollowedDids(), []);
+  assert.equal(store.removeFollower("did:plc:alice", "https://remote.example/users/r1"), null);
+});
+
 test("InMemoryBridgeStore stores objects and exposes outbox activities", () => {
   const store = new InMemoryBridgeStore();
   const actor = store.upsertActor({

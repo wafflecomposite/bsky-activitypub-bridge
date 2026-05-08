@@ -37,6 +37,30 @@ export async function runLocalE2EHarness({ workDir = null, cleanup = true } = {}
       actorId: "https://remote.example/users/bob",
       inboxUrl: "https://remote.example/users/bob/inbox"
     });
+    const removedFollower = runtime.store.removeFollower(
+      "did:plc:alice",
+      "https://remote.example/users/bob"
+    );
+
+    const unfollowedIngest = runtime.ingestJetstreamEvent({
+      did: "did:plc:alice",
+      time_us: 900_000,
+      commit: {
+        collection: "app.bsky.feed.post",
+        operation: "create",
+        rkey: "post-while-unfollowed",
+        record: {
+          text: "This should not be delivered",
+          createdAt: "2026-03-03T23:59:00.000Z"
+        }
+      }
+    });
+    const queueSizeAfterUnfollowedIngest = runtime.queue.size();
+
+    runtime.store.addFollower("did:plc:alice", {
+      actorId: "https://remote.example/users/bob",
+      inboxUrl: "https://remote.example/users/bob/inbox"
+    });
 
     const ingest = runtime.ingestJetstreamEvent({
       did: "did:plc:alice",
@@ -61,11 +85,17 @@ export async function runLocalE2EHarness({ workDir = null, cleanup = true } = {}
     const secondDrain = await runtime.drainDeliveries({ max: 5, now: 2_500 });
 
     const summary = {
-      ok: ingest.status === "enqueued"
+      ok: removedFollower?.actorId === "https://remote.example/users/bob"
+        && unfollowedIngest.status === "no-followers"
+        && queueSizeAfterUnfollowedIngest === 0
+        && ingest.status === "enqueued"
         && queuedUnlisted
         && firstDrain.some((entry) => entry.status === "retry-scheduled")
         && secondDrain.some((entry) => entry.status === "delivered")
         && runtime.queue.size() === 0,
+      removedFollower: removedFollower?.actorId ?? null,
+      unfollowedIngestStatus: unfollowedIngest.status,
+      queueSizeAfterUnfollowedIngest,
       ingestStatus: ingest.status,
       queuedUnlisted,
       firstDrain,

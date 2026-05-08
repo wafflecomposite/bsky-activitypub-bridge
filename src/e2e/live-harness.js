@@ -107,7 +107,8 @@ export async function runLiveE2EHarness({
       rkey: resolverUnfollowedPost.rkey
     });
     const remoteAcct = resolverActor.target;
-    const receiverAccounts = await mapReceivers(receivers, async (receiver) => {
+    const receiverAccountEntries = [];
+    for (const receiver of receivers) {
       const scopedLog = receiverLog(log, receiver);
       const discovered = await discoverRemoteAccountWithRetry({
         instanceUrl: receiver.instanceUrl,
@@ -123,20 +124,30 @@ export async function runLiveE2EHarness({
         timeoutMs: 60_000,
         log: scopedLog
       });
-      const followState = await followAndWait({
+      const authenticatedAccount = await getAuthenticatedAccount({
+        instanceUrl: receiver.instanceUrl,
+        accessToken: receiver.accessToken
+      });
+      const followLifecycle = await verifyFollowLifecycle({
+        localBaseUrl,
+        did,
         instanceUrl: receiver.instanceUrl,
         accessToken: receiver.accessToken,
         accountId: discovered.id,
+        receiverAccount: authenticatedAccount,
         timeoutMs: 180_000,
         log: scopedLog
       });
 
-      return {
+      receiverAccountEntries.push([receiver.name, {
         discovered,
         remoteAccountProfile,
-        followState
-      };
-    });
+        authenticatedAccount,
+        followState: followLifecycle.refollow,
+        followLifecycle
+      }]);
+    }
+    const receiverAccounts = Object.fromEntries(receiverAccountEntries);
 
     await app.stop();
     app = null;
@@ -353,6 +364,7 @@ export async function runLiveE2EHarness({
 
     const summary = {
       ok: everyReceiver(receiverAccounts, (entry) => entry.followState.following === true
+          && followLifecycleOk(entry.followLifecycle)
           && entry.remoteAccountProfile.bot === true
           && [expectedBlueskyProfileUrl, expectedBridgeActorUrl].includes(entry.remoteAccountProfile.url))
         && bridgeActorProfile.serviceActor === true
@@ -892,6 +904,100 @@ async function waitForRemoteAccountBotProfile({ instanceUrl, accessToken, accoun
   return last;
 }
 
+async function getAuthenticatedAccount({ instanceUrl, accessToken }) {
+  const account = await gtsApi({
+    instanceUrl,
+    accessToken,
+    path: "/api/v1/accounts/verify_credentials",
+    timeoutMs: 30_000
+  });
+
+  return {
+    id: account?.id ?? null,
+    username: account?.username ?? null,
+    acct: account?.acct ?? null,
+    url: account?.url ?? null,
+    uri: account?.uri ?? null
+  };
+}
+
+async function verifyFollowLifecycle({
+  localBaseUrl,
+  did,
+  instanceUrl,
+  accessToken,
+  accountId,
+  receiverAccount,
+  timeoutMs,
+  log
+}) {
+  const candidates = followerActorCandidates({ instanceUrl, receiverAccount });
+  const initialFollowers = await fetchBridgeFollowers({ localBaseUrl, did });
+  const initialTotalItems = initialFollowers.totalItems;
+
+  const firstFollow = await followAndWait({
+    instanceUrl,
+    accessToken,
+    accountId,
+    timeoutMs,
+    log
+  });
+  const bridgeAfterFirstFollow = await waitForBridgeFollowerState({
+    localBaseUrl,
+    did,
+    candidates,
+    expectedPresent: true,
+    minTotalItems: initialTotalItems + 1,
+    timeoutMs,
+    log
+  });
+
+  const unfollow = await unfollowAndWait({
+    instanceUrl,
+    accessToken,
+    accountId,
+    timeoutMs,
+    log
+  });
+  const bridgeAfterUnfollow = await waitForBridgeFollowerState({
+    localBaseUrl,
+    did,
+    candidates,
+    expectedPresent: false,
+    maxTotalItems: initialTotalItems,
+    timeoutMs,
+    log
+  });
+
+  const refollow = await followAndWait({
+    instanceUrl,
+    accessToken,
+    accountId,
+    timeoutMs,
+    log
+  });
+  const bridgeAfterRefollow = await waitForBridgeFollowerState({
+    localBaseUrl,
+    did,
+    candidates,
+    expectedPresent: true,
+    minTotalItems: initialTotalItems + 1,
+    timeoutMs,
+    log
+  });
+
+  return {
+    candidates,
+    initialFollowers,
+    firstFollow,
+    bridgeAfterFirstFollow,
+    unfollow,
+    bridgeAfterUnfollow,
+    refollow,
+    bridgeAfterRefollow
+  };
+}
+
 async function followAndWait({ instanceUrl, accessToken, accountId, timeoutMs, log }) {
   await gtsApi({
     instanceUrl,
@@ -901,35 +1007,222 @@ async function followAndWait({ instanceUrl, accessToken, accountId, timeoutMs, l
     timeoutMs: 30_000
   });
 
+  return waitForRelationshipState({
+    instanceUrl,
+    accessToken,
+    accountId,
+    following: true,
+    requested: false,
+    timeoutMs,
+    log
+  });
+}
+
+async function unfollowAndWait({ instanceUrl, accessToken, accountId, timeoutMs, log }) {
+  await gtsApi({
+    instanceUrl,
+    accessToken,
+    path: `/api/v1/accounts/${encodeURIComponent(accountId)}/unfollow`,
+    method: "POST",
+    timeoutMs: 30_000
+  });
+
+  return waitForRelationshipState({
+    instanceUrl,
+    accessToken,
+    accountId,
+    following: false,
+    requested: false,
+    timeoutMs,
+    log
+  });
+}
+
+async function waitForRelationshipState({
+  instanceUrl,
+  accessToken,
+  accountId,
+  following,
+  requested,
+  timeoutMs,
+  log
+}) {
   const startedAt = Date.now();
+  let last = null;
+
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const rel = await gtsApi({
-        instanceUrl,
-        accessToken,
-        path: `/api/v1/accounts/relationships?id[]=${encodeURIComponent(accountId)}`,
-        timeoutMs: 30_000
-      });
-
-      const state = Array.isArray(rel) ? rel[0] : rel?.[0];
-      if (state?.following === true) {
-        return {
-          following: true,
-          requested: state.requested ?? false
-        };
+      const state = await getRelationshipState({ instanceUrl, accessToken, accountId });
+      last = state;
+      if (state.following === following && state.requested === requested) {
+        return state;
       }
 
-      if (state?.requested === true) {
-        log("follow still requested; waiting...");
-      }
+      log(`relationship waiting; following=${String(state.following)} requested=${String(state.requested)}`);
     } catch (error) {
-      log(`follow-state retry error=${error instanceof Error ? error.message : String(error)}`);
+      log(`relationship retry error=${error instanceof Error ? error.message : String(error)}`);
     }
 
     await sleep(2_000);
   }
 
-  throw new Error("Follow did not reach following=true before timeout");
+  throw new Error(
+    `Relationship did not reach following=${String(following)} requested=${String(requested)} before timeout`
+      + (last ? `; last following=${String(last.following)} requested=${String(last.requested)}` : "")
+  );
+}
+
+async function getRelationshipState({ instanceUrl, accessToken, accountId }) {
+  const rel = await gtsApi({
+    instanceUrl,
+    accessToken,
+    path: `/api/v1/accounts/relationships?id[]=${encodeURIComponent(accountId)}`,
+    timeoutMs: 30_000
+  });
+
+  const state = Array.isArray(rel) ? rel[0] : rel?.[0];
+  return {
+    following: state?.following === true,
+    requested: state?.requested === true,
+    showingReblogs: state?.showing_reblogs ?? null,
+    notifying: state?.notifying ?? null
+  };
+}
+
+async function waitForBridgeFollowerState({
+  localBaseUrl,
+  did,
+  candidates,
+  expectedPresent,
+  minTotalItems = null,
+  maxTotalItems = null,
+  timeoutMs,
+  log
+}) {
+  const startedAt = Date.now();
+  let last = null;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const followers = await fetchBridgeFollowers({ localBaseUrl, did });
+      const match = findMatchingFollower(followers.orderedItems, candidates);
+      const countOk = (minTotalItems === null || followers.totalItems >= minTotalItems)
+        && (maxTotalItems === null || followers.totalItems <= maxTotalItems);
+      const presenceOk = expectedPresent
+        ? (match !== null || countOk)
+        : (match === null && countOk);
+
+      last = {
+        ...followers,
+        expectedPresent,
+        matchedFollowerId: match,
+        countOk,
+        ok: presenceOk
+      };
+
+      if (presenceOk) {
+        return last;
+      }
+
+      log(`bridge followers waiting; expectedPresent=${String(expectedPresent)} total=${followers.totalItems} matched=${match ?? "none"}`);
+    } catch (error) {
+      log(`bridge followers retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(2_000);
+  }
+
+  return last ?? {
+    totalItems: null,
+    orderedItems: [],
+    expectedPresent,
+    matchedFollowerId: null,
+    countOk: false,
+    ok: false
+  };
+}
+
+async function fetchBridgeFollowers({ localBaseUrl, did }) {
+  const response = await fetch(`${localBaseUrl}/ap/actor/${encodeURIComponent(did)}/followers`, {
+    headers: {
+      accept: "application/activity+json, application/ld+json, application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Bridge followers failed: ${response.status}`);
+  }
+
+  const body = await response.json();
+  const orderedItems = Array.isArray(body?.orderedItems) ? body.orderedItems : [];
+
+  return {
+    totalItems: typeof body?.totalItems === "number" ? body.totalItems : orderedItems.length,
+    orderedItems
+  };
+}
+
+function followerActorCandidates({ instanceUrl, receiverAccount }) {
+  const candidates = new Set();
+  addCandidateUrl(candidates, receiverAccount?.url);
+  addCandidateUrl(candidates, receiverAccount?.uri);
+
+  const username = typeof receiverAccount?.username === "string" ? receiverAccount.username.trim() : "";
+  if (username) {
+    const base = stripTrailingSlash(instanceUrl);
+    addCandidateUrl(candidates, `${base}/users/${encodeURIComponent(username)}`);
+    addCandidateUrl(candidates, `${base}/@${encodeURIComponent(username)}`);
+  }
+
+  return Array.from(candidates);
+}
+
+function addCandidateUrl(candidates, value) {
+  const normalized = normalizeFollowerId(value);
+  if (normalized) {
+    candidates.add(normalized);
+  }
+}
+
+function findMatchingFollower(orderedItems, candidates) {
+  const normalizedCandidates = new Set(candidates.map(normalizeFollowerId).filter(Boolean));
+  if (normalizedCandidates.size === 0) {
+    return null;
+  }
+
+  for (const item of orderedItems) {
+    const normalized = normalizeFollowerId(item);
+    if (normalized && normalizedCandidates.has(normalized)) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+function normalizeFollowerId(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return value.trim().replace(/\/$/, "");
+  }
+}
+
+function followLifecycleOk(lifecycle) {
+  return lifecycle?.firstFollow?.following === true
+    && lifecycle?.firstFollow?.requested === false
+    && lifecycle?.bridgeAfterFirstFollow?.ok === true
+    && lifecycle?.unfollow?.following === false
+    && lifecycle?.unfollow?.requested === false
+    && lifecycle?.bridgeAfterUnfollow?.ok === true
+    && lifecycle?.refollow?.following === true
+    && lifecycle?.refollow?.requested === false
+    && lifecycle?.bridgeAfterRefollow?.ok === true;
 }
 
 async function createBlueskySession({ identifier, appPassword }) {

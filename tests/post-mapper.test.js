@@ -17,12 +17,15 @@ test("mapBskyPostToActivityPub maps basic post to Note and Create", () => {
   });
 
   assert.equal(result.note.type, "Note");
-  assert.equal(result.note["@context"], "https://www.w3.org/ns/activitystreams");
+  assert.equal(Array.isArray(result.note["@context"]), true);
+  assert.equal(result.note["@context"][0], "https://www.w3.org/ns/activitystreams");
   assert.equal(result.note.content, "Hello world");
   assert.equal(result.note.id, "https://bridge.example/ap/object/did%3Aplc%3Aalice/post1");
   assert.equal(result.note.url, "https://bsky.app/profile/did:plc:alice/post/post1");
   assert.deepEqual(result.note.to, ["https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers"]);
   assert.deepEqual(result.note.cc, ["https://www.w3.org/ns/activitystreams#Public"]);
+  assert.deepEqual(result.note.interactionPolicy.canQuote.automaticApproval, ["https://www.w3.org/ns/activitystreams#Public"]);
+  assert.deepEqual(result.note.interactionPolicy.canQuote.manualApproval, []);
   assert.equal(result.create.type, "Create");
   assert.equal(result.create.object.id, result.note.id);
 });
@@ -326,12 +329,25 @@ test("mapBskyPostToActivityPub maps recordWithMedia embeds", () => {
     }
   });
 
-  assert.equal(result.note.attachment.length, 2);
+  assert.equal(result.note.quote, "https://bridge.example/ap/object/did%3Aplc%3Abob/root7");
+  assert.equal(result.note.quoteUrl, "https://bridge.example/ap/object/did%3Aplc%3Abob/root7");
+  assert.equal(result.note.quoteUri, "https://bridge.example/ap/object/did%3Aplc%3Abob/root7");
+  assert.equal(result.note._misskey_quote, "https://bridge.example/ap/object/did%3Aplc%3Abob/root7");
+  assert.equal(
+    result.note.quoteAuthorization,
+    "https://bridge.example/ap/object/did%3Aplc%3Abob/root7/quote-authorization/did%3Aplc%3Aalice/post9"
+  );
+  assert.equal(
+    result.note.content,
+    'quote + media<span class="quote-inline"><br/>RE: <a href="https://bridge.example/ap/object/did%3Aplc%3Abob/root7">https://bridge.example/ap/object/did%3Aplc%3Abob/root7</a></span>'
+  );
+  assert.equal(result.note.tag.at(-1).type, "Link");
+  assert.deepEqual(result.note.tag.at(-1).rel, [
+    "https://w3id.org/fep/044f#quote",
+    "https://misskey-hub.net/ns#_misskey_quote"
+  ]);
+  assert.equal(result.note.attachment.length, 1);
   assert.deepEqual(result.note.attachment[0], {
-    type: "Link",
-    url: "https://bridge.example/ap/object/did%3Aplc%3Abob/root7"
-  });
-  assert.deepEqual(result.note.attachment[1], {
     type: "Document",
     url: "https://bsky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Aalice&cid=bafkreivideo123",
     mediaType: "video/mp4",
@@ -376,8 +392,61 @@ test("mapBskyPostToActivityPub only marks media attachments sensitive", () => {
 
   assert.equal(result.note.sensitive, true);
   assert.equal(result.note.summary, "Graphic Media");
-  assert.equal(result.note.attachment[0].type, "Link");
-  assert.equal(result.note.attachment[0].sensitive, undefined);
-  assert.equal(result.note.attachment[1].type, "Document");
-  assert.equal(result.note.attachment[1].sensitive, true);
+  assert.equal(result.note.quote, "https://bridge.example/ap/object/did%3Aplc%3Abob/root7");
+  assert.equal(result.note.attachment.length, 1);
+  assert.equal(result.note.attachment[0].type, "Document");
+  assert.equal(result.note.attachment[0].sensitive, true);
+});
+
+test("mapBskyPostToActivityPub maps record embeds to FEP-044f quotes with compatibility fields", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "quote1",
+    record: {
+      text: "look at this",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      embed: {
+        $type: "app.bsky.embed.record",
+        record: {
+          uri: "at://did:plc:bob/app.bsky.feed.post/quoted",
+          cid: "bafyreiquoted"
+        }
+      }
+    }
+  });
+
+  const target = "https://bridge.example/ap/object/did%3Aplc%3Abob/quoted";
+  assert.equal(result.note.quote, target);
+  assert.equal(result.note.quoteUrl, target);
+  assert.equal(result.note.quoteUri, target);
+  assert.equal(result.note._misskey_quote, target);
+  assert.equal(
+    result.note.quoteAuthorization,
+    "https://bridge.example/ap/object/did%3Aplc%3Abob/quoted/quote-authorization/did%3Aplc%3Aalice/quote1"
+  );
+  assert.equal(result.note.attachment, undefined);
+  assert.equal(result.create.object.quote, target);
+});
+
+test("mapBskyPostToActivityPub does not require quote authorization for self-quotes", () => {
+  const result = mapBskyPostToActivityPub({
+    baseUrl,
+    did,
+    rkey: "quote-self",
+    record: {
+      text: "my older post",
+      createdAt: "2026-03-04T00:00:00.000Z",
+      embed: {
+        $type: "app.bsky.embed.record",
+        record: {
+          uri: "at://did:plc:alice/app.bsky.feed.post/older",
+          cid: "bafyreiself"
+        }
+      }
+    }
+  });
+
+  assert.equal(result.note.quote, "https://bridge.example/ap/object/did%3Aplc%3Aalice/older");
+  assert.equal(result.note.quoteAuthorization, undefined);
 });

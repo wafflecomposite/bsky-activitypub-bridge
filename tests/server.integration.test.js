@@ -292,6 +292,32 @@ test("dispatchBridgeRequest redirects browser object requests to Bluesky post", 
   assert.equal(response.headers.location, "https://bsky.app/profile/did:plc:alice/post/post1");
 });
 
+test("dispatchBridgeRequest serves FEP-044f quote authorization stamps", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+
+  const response = await dispatchBridgeRequest({
+    method: "GET",
+    rawUrl: "/ap/object/did%3Aplc%3Abob/root7/quote-authorization/did%3Aplc%3Aalice/quote1",
+    headers: { host: "bridge.example" },
+    store,
+    keyManager,
+    baseUrl
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.contentType, "application/activity+json");
+  assert.equal(response.body.type, "QuoteAuthorization");
+  assert.equal(
+    response.body.id,
+    "https://bridge.example/ap/object/did%3Aplc%3Abob/root7/quote-authorization/did%3Aplc%3Aalice/quote1"
+  );
+  assert.equal(response.body.attributedTo, "https://bridge.example/ap/actor/did%3Aplc%3Abob");
+  assert.equal(response.body.interactionTarget, "https://bridge.example/ap/object/did%3Aplc%3Abob/root7");
+  assert.equal(response.body.interactingObject, "https://bridge.example/ap/object/did%3Aplc%3Aalice/quote1");
+});
+
 test("dispatchBridgeRequest can materialize uncached object on demand", async () => {
   const baseUrl = "https://bridge.example";
   const store = new InMemoryBridgeStore();

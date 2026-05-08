@@ -79,6 +79,10 @@ export function objectId(baseUrl, did, rkey) {
   return `${baseUrl}/ap/object/${encodeDidForPath(did)}/${encodeURIComponent(rkey)}`;
 }
 
+export function quoteAuthorizationId(baseUrl, quotedDid, quotedRkey, quotingDid, quotingRkey) {
+  return `${objectId(baseUrl, quotedDid, quotedRkey)}/quote-authorization/${encodeDidForPath(quotingDid)}/${encodeURIComponent(quotingRkey)}`;
+}
+
 export function webfingerSubject(handle, bridgeHost) {
   return `${ACCT_PREFIX}${assertHandle(handle)}@${bridgeHost.toLowerCase()}`;
 }

@@ -27,6 +27,10 @@ test("loadLiveE2ECredentials loads values from json file", () => {
         instanceUrl: "https://gts.example",
         accessToken: "token123"
       },
+      mastodon: {
+        instanceUrl: "https://mastodon.example",
+        accessToken: "mastodon-token"
+      },
       bluesky: {
         identifier: "handle.bsky.social",
         appPassword: "app-pass",
@@ -42,6 +46,9 @@ test("loadLiveE2ECredentials loads values from json file", () => {
 
     assert.equal(credentials.gtsInstanceUrl, "https://gts.example");
     assert.equal(credentials.gtsAccessToken, "token123");
+    assert.equal(credentials.mastodonInstanceUrl, "https://mastodon.example");
+    assert.equal(credentials.mastodonAccessToken, "mastodon-token");
+    assert.deepEqual(credentials.receivers.map((receiver) => receiver.name), ["gts", "mastodon"]);
     assert.equal(credentials.blueskyIdentifier, "handle.bsky.social");
     assert.equal(credentials.blueskyAppPassword, "app-pass");
     assert.equal(credentials.blueskyUnfollowedPostUrl, "https://bsky.app/profile/did:plc:abc/post/3xyz");
@@ -71,6 +78,7 @@ test("loadLiveE2ECredentials falls back to markdown labels", () => {
 
     assert.equal(credentials.gtsInstanceUrl, "https://gts.md.example");
     assert.equal(credentials.gtsAccessToken, "md-token");
+    assert.deepEqual(credentials.receivers.map((receiver) => receiver.name), ["gts"]);
     assert.equal(credentials.blueskyIdentifier, "md-handle.bsky.social");
     assert.equal(credentials.blueskyAppPassword, "md-app-pass");
     assert.equal(credentials.blueskyUnfollowedPostUrl, "https://bsky.app/profile/did:plc:md/post/3md");
@@ -86,6 +94,8 @@ test("loadLiveE2ECredentials gives env priority over file values", () => {
     env: {
       GTS_INSTANCE_URL: "https://gts.env.example",
       GTS_ACCESS_TOKEN: "env-token",
+      MASTODON_INSTANCE_URL: "https://mastodon.env.example",
+      MASTODON_ACCESS_TOKEN: "mastodon-env-token",
       BLUESKY_IDENTIFIER: "env-handle.bsky.social",
       BLUESKY_APP_PASSWORD: "env-app-pass",
       BLUESKY_UNFOLLOWED_POST_URL: "https://bsky.app/profile/did:plc:env/post/3env"
@@ -94,6 +104,7 @@ test("loadLiveE2ECredentials gives env priority over file values", () => {
 
   assert.equal(credentials.gtsInstanceUrl, "https://gts.env.example");
   assert.equal(credentials.gtsAccessToken, "env-token");
+  assert.deepEqual(credentials.receivers.map((receiver) => receiver.name), ["gts", "mastodon"]);
   assert.equal(credentials.blueskyIdentifier, "env-handle.bsky.social");
   assert.equal(credentials.blueskyAppPassword, "env-app-pass");
   assert.equal(credentials.blueskyUnfollowedPostUrl, "https://bsky.app/profile/did:plc:env/post/3env");

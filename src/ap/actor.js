@@ -13,7 +13,7 @@ const SECURITY_CONTEXT = "https://w3id.org/security/v1";
 
 export function buildActorDocument({ baseUrl, profile, publicKeyPem }) {
   const id = actorId(baseUrl, profile.did);
-  const bridgeNotice = `Bridged by ${baseUrl}. Interactions are not delivered to Bluesky.`;
+  const bridgeNotice = `[Bridged by ${baseUrl}, interactions are not delivered to Bluesky]`;
   const summary = typeof profile.summary === "string" && profile.summary.trim()
     ? `${bridgeNotice}\n\n${profile.summary}`
     : bridgeNotice;

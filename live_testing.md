@@ -65,13 +65,14 @@ The automated harness:
 - verifies actor/profile metadata, remote account `bot` visibility, and featured collection availability
 - verifies resolver output for actor, followed post, and unfollowed post URLs
 - verifies AP fetch paths still work for remote import despite browser-facing redirects
-- imports an unfollowed bridge object through GtS status search
-- discovers and follows the bridged account from GtS
-- temporarily updates the Bluesky profile description and verifies GtS receives the ActivityPub actor `Update`, then restores the original profile
-- publishes a real Bluesky thread and verifies delivery/linkage plus `unlisted` visibility in GtS
+- imports an unfollowed bridge object through GtS and Mastodon status search
+- discovers and follows the bridged account from GtS and Mastodon
+- temporarily updates the Bluesky profile description and verifies both receivers get the ActivityPub actor `Update`, then restores the original profile
+- publishes a real Bluesky thread and verifies delivery/linkage plus `unlisted` visibility in both receivers
 - verifies bridge outbox/object endpoints for the thread, including unlisted ActivityPub addressing
-- publishes a media post and verifies GtS `unlisted` visibility plus AP attachment output
-- publishes a labeled media post and verifies GtS plus AP CW/sensitive-media output with `unlisted` visibility
+- publishes a quote post and verifies bridge FEP-044f quote fields, fallback link, quote authorization, and receiver quote references
+- publishes a media post and verifies receiver `unlisted` visibility plus AP attachment output
+- publishes a labeled media post and verifies receiver plus AP CW/sensitive-media output with `unlisted` visibility
 - publishes a repost and verifies ActivityPub `Announce`
 - waits for delivery queue drain and checks runtime delivery metrics
 
@@ -108,3 +109,4 @@ npm start
 - Existing remote account cache entries may keep an old actor type. If a bridged profile was discovered before the bridge emitted ActivityStreams `Service`, force a remote refresh or use a fresh bridge domain before judging the bot flag.
 - If Jetstream is off during the posting phase, Bluesky posts will not deliver.
 - Live automation uses and verifies `BRIDGE_POST_VISIBILITY=unlisted` to avoid public-feed noise while still delivering to followers.
+- Optional Mastodon live credentials can be supplied with `MASTODON_INSTANCE_URL` and `MASTODON_ACCESS_TOKEN`, or a `mastodon` object in `test_credentials.json`.

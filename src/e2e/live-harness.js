@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { createBridgeApplication } from "../app/application.js";
-import { getProfile } from "../bsky/public-api.js";
+import { getPostRecord, getProfile } from "../bsky/public-api.js";
 import { blueskyPostUrl, blueskyProfileUrl } from "../bsky/web-url.js";
 
 const DEFAULT_DID = "did:plc:ct7l6fgjtseazmaunhzrbydz";
@@ -27,6 +27,7 @@ export async function runLiveE2EHarness({
     credentialsFile,
     credentialsMarkdownFile
   });
+  const receivers = normalizeLiveReceivers(resolvedCredentials);
 
   const tempDir = workDir ?? mkdtempSync(join(tmpdir(), "bridge-live-e2e-"));
   const port = await getFreePort();
@@ -48,6 +49,7 @@ export async function runLiveE2EHarness({
       did,
       handle: resolvedCredentials.blueskyIdentifier
     });
+    const expectedBridgeActorUrl = `${tunnelUrl}/ap/actor/${encodeURIComponent(did)}`;
 
     app = createBridgeApplication({
       baseUrl: tunnelUrl,
@@ -92,36 +94,48 @@ export async function runLiveE2EHarness({
       publicBaseUrl: tunnelUrl,
       query: resolvedCredentials.blueskyUnfollowedPostUrl
     });
-    const resolverUnfollowedPostSearch = await waitForStatusSearchByUrl({
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
+    const resolverUnfollowedPostSearch = await mapReceivers(receivers, async (receiver) => waitForStatusSearchByUrl({
+      instanceUrl: receiver.instanceUrl,
+      accessToken: receiver.accessToken,
       targetUrl: resolverUnfollowedPost.target,
       marker: null,
       timeoutMs: 180_000,
-      log
+      log: receiverLog(log, receiver)
+    }));
+    const quoteTargetRecord = await getPostRecord({
+      did: resolverUnfollowedPost.did,
+      rkey: resolverUnfollowedPost.rkey
     });
     const remoteAcct = resolverActor.target;
-    const discovered = await discoverRemoteAccountWithRetry({
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
-      remoteAcct,
-      timeoutMs: 180_000,
-      log
-    });
-    const remoteAccountProfile = await waitForRemoteAccountBotProfile({
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
-      accountId: discovered.id,
-      timeoutMs: 60_000,
-      log
-    });
+    const receiverAccounts = await mapReceivers(receivers, async (receiver) => {
+      const scopedLog = receiverLog(log, receiver);
+      const discovered = await discoverRemoteAccountWithRetry({
+        instanceUrl: receiver.instanceUrl,
+        accessToken: receiver.accessToken,
+        remoteAcct,
+        timeoutMs: 180_000,
+        log: scopedLog
+      });
+      const remoteAccountProfile = await waitForRemoteAccountBotProfile({
+        instanceUrl: receiver.instanceUrl,
+        accessToken: receiver.accessToken,
+        accountId: discovered.id,
+        timeoutMs: 60_000,
+        log: scopedLog
+      });
+      const followState = await followAndWait({
+        instanceUrl: receiver.instanceUrl,
+        accessToken: receiver.accessToken,
+        accountId: discovered.id,
+        timeoutMs: 180_000,
+        log: scopedLog
+      });
 
-    const followState = await followAndWait({
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
-      accountId: discovered.id,
-      timeoutMs: 180_000,
-      log
+      return {
+        discovered,
+        remoteAccountProfile,
+        followState
+      };
     });
 
     await app.stop();
@@ -160,16 +174,16 @@ export async function runLiveE2EHarness({
       appPassword: resolvedCredentials.blueskyAppPassword,
       marker: profileUpdateMarker
     });
-    const profileUpdate = await waitForProfileUpdate({
+    const profileUpdate = await mapReceivers(receivers, async (receiver) => waitForProfileUpdate({
       localBaseUrl,
       did,
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
-      accountId: discovered.id,
+      instanceUrl: receiver.instanceUrl,
+      accessToken: receiver.accessToken,
+      accountId: receiverAccounts[receiver.name].discovered.id,
       marker: profileUpdateMarker,
       timeoutMs: 180_000,
-      log
-    });
+      log: receiverLog(log, receiver)
+    }));
     const profileRestore = await restoreBlueskyProfileRecord(pendingProfileRestore);
     pendingProfileRestore = null;
 
@@ -179,17 +193,17 @@ export async function runLiveE2EHarness({
       textPrefix: "Bridge automated live e2e"
     });
 
-    const timelineThread = await waitForTimelineThread({
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
+    const timelineThread = await mapReceivers(receivers, async (receiver) => waitForTimelineThread({
+      instanceUrl: receiver.instanceUrl,
+      accessToken: receiver.accessToken,
       rootMarker: postedThread.root.marker,
       replyMarker: postedThread.reply.marker,
       expectedRemoteAcct: remoteAcct,
       expectedUriPrefix: tunnelUrl,
       expectedVisibility: "unlisted",
       timeoutMs: 180_000,
-      log
-    });
+      log: receiverLog(log, receiver)
+    }));
 
     const rootRkey = extractPostRkeyFromAtUri(postedThread.root.uri);
     const replyRkey = extractPostRkeyFromAtUri(postedThread.reply.uri);
@@ -200,14 +214,14 @@ export async function runLiveE2EHarness({
       handle: resolvedCredentials.blueskyIdentifier,
       rkey: rootRkey
     });
-    const resolverPostSearch = await waitForStatusSearchByUrl({
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
+    const resolverPostSearch = await mapReceivers(receivers, async (receiver) => waitForStatusSearchByUrl({
+      instanceUrl: receiver.instanceUrl,
+      accessToken: receiver.accessToken,
       targetUrl: resolverPost.target,
       marker: postedThread.root.marker,
       timeoutMs: 180_000,
-      log
-    });
+      log: receiverLog(log, receiver)
+    }));
     const bridgeReadSurface = await waitForBridgeThreadReadSurface({
       localBaseUrl,
       publicBaseUrl: tunnelUrl,
@@ -220,6 +234,40 @@ export async function runLiveE2EHarness({
       log
     });
 
+    const quotedObjectId = resolverUnfollowedPost.target;
+    const postedQuote = await createBlueskyQuotePost({
+      identifier: resolvedCredentials.blueskyIdentifier,
+      appPassword: resolvedCredentials.blueskyAppPassword,
+      textPrefix: "Bridge automated live e2e quote",
+      subjectUri: quoteTargetRecord.uri ?? `at://${resolverUnfollowedPost.did}/app.bsky.feed.post/${resolverUnfollowedPost.rkey}`,
+      subjectCid: quoteTargetRecord.cid
+    });
+
+    const timelineQuote = await mapReceivers(receivers, async (receiver) => waitForTimelineQuotePost({
+      instanceUrl: receiver.instanceUrl,
+      accessToken: receiver.accessToken,
+      marker: postedQuote.marker,
+      expectedRemoteAcct: remoteAcct,
+      expectedUriPrefix: tunnelUrl,
+      expectedVisibility: "unlisted",
+      expectedQuotedUri: quotedObjectId,
+      timeoutMs: 180_000,
+      log: receiverLog(log, receiver)
+    }));
+
+    const quoteRkey = extractPostRkeyFromAtUri(postedQuote.uri);
+    const bridgeQuoteObject = await waitForBridgeQuoteObject({
+      localBaseUrl,
+      publicBaseUrl: tunnelUrl,
+      did,
+      rkey: quoteRkey,
+      marker: postedQuote.marker,
+      quotedObjectId,
+      quotedDid: resolverUnfollowedPost.did,
+      timeoutMs: 90_000,
+      log
+    });
+
     const postedMedia = await createBlueskyImagePost({
       identifier: resolvedCredentials.blueskyIdentifier,
       appPassword: resolvedCredentials.blueskyAppPassword,
@@ -227,16 +275,16 @@ export async function runLiveE2EHarness({
       imagePath: mediaFixturePath
     });
 
-    const timelineMedia = await waitForTimelineMediaPost({
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
+    const timelineMedia = await mapReceivers(receivers, async (receiver) => waitForTimelineMediaPost({
+      instanceUrl: receiver.instanceUrl,
+      accessToken: receiver.accessToken,
       marker: postedMedia.marker,
       expectedRemoteAcct: remoteAcct,
       expectedUriPrefix: tunnelUrl,
       expectedVisibility: "unlisted",
       timeoutMs: 180_000,
-      log
-    });
+      log: receiverLog(log, receiver)
+    }));
 
     const mediaRkey = extractPostRkeyFromAtUri(postedMedia.uri);
     const bridgeMediaObject = await waitForBridgeMediaObject({
@@ -256,9 +304,9 @@ export async function runLiveE2EHarness({
       labels: [{ val: LIVE_E2E_CONTENT_LABEL }]
     });
 
-    const timelineLabeledMedia = await waitForTimelineMediaPost({
-      instanceUrl: resolvedCredentials.gtsInstanceUrl,
-      accessToken: resolvedCredentials.gtsAccessToken,
+    const timelineLabeledMedia = await mapReceivers(receivers, async (receiver) => waitForTimelineMediaPost({
+      instanceUrl: receiver.instanceUrl,
+      accessToken: receiver.accessToken,
       marker: postedLabeledMedia.marker,
       timeoutMs: 180_000,
       expectedSensitive: true,
@@ -266,8 +314,8 @@ export async function runLiveE2EHarness({
       expectedRemoteAcct: remoteAcct,
       expectedUriPrefix: tunnelUrl,
       expectedVisibility: "unlisted",
-      log
-    });
+      log: receiverLog(log, receiver)
+    }));
 
     const labeledMediaRkey = extractPostRkeyFromAtUri(postedLabeledMedia.uri);
     const bridgeLabeledMediaObject = await waitForBridgeMediaObject({
@@ -304,12 +352,12 @@ export async function runLiveE2EHarness({
     const runtimeMetrics = app.getRuntime()?.getMetrics() ?? null;
 
     const summary = {
-      ok: followState.following === true
+      ok: everyReceiver(receiverAccounts, (entry) => entry.followState.following === true
+          && entry.remoteAccountProfile.bot === true
+          && [expectedBlueskyProfileUrl, expectedBridgeActorUrl].includes(entry.remoteAccountProfile.url))
         && bridgeActorProfile.serviceActor === true
         && bridgeActorProfile.bot === true
         && bridgeActorProfile.profileUrlMatches === true
-        && remoteAccountProfile.bot === true
-        && remoteAccountProfile.url === expectedBlueskyProfileUrl
         && bridgeActorProfile.featuredCollection === true
         && bridgeActorProfile.summaryHasBridgeNotice === true
         && bridgeActorProfile.avatarMatches === true
@@ -317,39 +365,40 @@ export async function runLiveE2EHarness({
         && bridgeActorProfile.summaryContainsDescription === true
         && resolverActor.ok === true
         && resolverUnfollowedPost.ok === true
-        && resolverUnfollowedPostSearch.found === true
+        && everyReceiver(resolverUnfollowedPostSearch, (entry) => entry.found === true)
         && resolverPost.ok === true
-        && resolverPostSearch.found === true
-        && resolverPostSearch.url === expectedRootBlueskyPostUrl
-        && profileUpdate.actorSummaryHasMarker === true
-        && profileUpdate.remoteNoteHasMarker === true
+        && everyReceiver(resolverPostSearch, (entry) => entry.found === true && entry.url === expectedRootBlueskyPostUrl)
+        && everyReceiver(profileUpdate, (entry) => entry.actorSummaryHasMarker === true && entry.remoteNoteHasMarker === true)
         && profileRestore.restored === true
-        && timelineThread.threadLinked === true
-        && timelineThread.rootVisibility === "unlisted"
-        && timelineThread.replyVisibility === "unlisted"
+        && everyReceiver(timelineThread, (entry) => entry.threadLinked === true
+          && entry.rootVisibility === "unlisted"
+          && entry.replyVisibility === "unlisted")
         && bridgeReadSurface.ok === true
-        && timelineMedia.hasMediaAttachment === true
-        && timelineMedia.visibility === "unlisted"
+        && everyReceiver(timelineQuote, (entry) => entry.found === true
+          && entry.visibility === "unlisted"
+          && entry.quoteReferenceFound === true)
+        && bridgeQuoteObject.ok === true
+        && everyReceiver(timelineMedia, (entry) => entry.hasMediaAttachment === true && entry.visibility === "unlisted")
         && bridgeMediaObject.hasAttachment === true
-        && timelineLabeledMedia.hasMediaAttachment === true
-        && timelineLabeledMedia.sensitive === true
-        && timelineLabeledMedia.spoilerText === LIVE_E2E_CONTENT_WARNING
-        && timelineLabeledMedia.visibility === "unlisted"
+        && everyReceiver(timelineLabeledMedia, (entry) => entry.hasMediaAttachment === true
+          && entry.sensitive === true
+          && entry.spoilerText === LIVE_E2E_CONTENT_WARNING
+          && entry.visibility === "unlisted")
         && bridgeLabeledMediaObject.hasAttachment === true
         && bridgeLabeledMediaObject.noteSensitive === true
         && bridgeLabeledMediaObject.attachmentSensitive === true
         && bridgeLabeledMediaObject.summary === LIVE_E2E_CONTENT_WARNING
         && bridgeRepost.found === true
-        && (runtimeMetrics?.delivery?.delivered ?? 0) >= 3,
+        && (runtimeMetrics?.delivery?.delivered ?? 0) >= receivers.length * 3,
       tunnelUrl,
       dataDir: tempDir,
       remoteAcct,
       did,
+      receiverNames: receivers.map((receiver) => receiver.name),
       expectedBlueskyProfileUrl,
+      expectedBridgeActorUrl,
       expectedRootBlueskyPostUrl,
-      discovered,
-      remoteAccountProfile,
-      followState,
+      receiverAccounts,
       bridgeActorProfile,
       resolverActor,
       resolverUnfollowedPost,
@@ -361,6 +410,9 @@ export async function runLiveE2EHarness({
       profileRestore,
       timelineThread,
       bridgeReadSurface,
+      postedQuote,
+      timelineQuote,
+      bridgeQuoteObject,
       postedMedia,
       timelineMedia,
       bridgeMediaObject,
@@ -408,6 +460,16 @@ export function loadLiveE2ECredentials({
       jsonCredentials?.gts?.accessToken
     ])
     ?? extractLabeledValue(fileText, "Access Token");
+  const mastodonInstanceUrl = env.MASTODON_INSTANCE_URL
+    ?? pickFirstString([
+      jsonCredentials?.mastodonInstanceUrl,
+      jsonCredentials?.mastodon?.instanceUrl
+    ]);
+  const mastodonAccessToken = env.MASTODON_ACCESS_TOKEN
+    ?? pickFirstString([
+      jsonCredentials?.mastodonAccessToken,
+      jsonCredentials?.mastodon?.accessToken
+    ]);
   const blueskyIdentifier = env.BLUESKY_IDENTIFIER
     ?? pickFirstString([
       jsonCredentials?.blueskyIdentifier,
@@ -449,10 +511,79 @@ export function loadLiveE2ECredentials({
   return {
     gtsInstanceUrl,
     gtsAccessToken,
+    mastodonInstanceUrl,
+    mastodonAccessToken,
+    receivers: [
+      {
+        name: "gts",
+        instanceUrl: gtsInstanceUrl,
+        accessToken: gtsAccessToken
+      },
+      ...(mastodonInstanceUrl && mastodonAccessToken
+        ? [{
+            name: "mastodon",
+            instanceUrl: mastodonInstanceUrl,
+            accessToken: mastodonAccessToken
+          }]
+        : [])
+    ],
     blueskyIdentifier,
     blueskyAppPassword,
     blueskyUnfollowedPostUrl
   };
+}
+
+function normalizeLiveReceivers(credentials) {
+  const rawReceivers = Array.isArray(credentials?.receivers) ? credentials.receivers : [];
+  const receivers = [];
+
+  for (const receiver of rawReceivers) {
+    if (receiver?.name && receiver?.instanceUrl && receiver?.accessToken) {
+      receivers.push({
+        name: String(receiver.name),
+        instanceUrl: String(receiver.instanceUrl).replace(/\/+$/, ""),
+        accessToken: String(receiver.accessToken)
+      });
+    }
+  }
+
+  if (credentials?.gtsInstanceUrl && credentials?.gtsAccessToken && !receivers.some((receiver) => receiver.name === "gts")) {
+    receivers.push({
+      name: "gts",
+      instanceUrl: String(credentials.gtsInstanceUrl).replace(/\/+$/, ""),
+      accessToken: String(credentials.gtsAccessToken)
+    });
+  }
+
+  if (credentials?.mastodonInstanceUrl && credentials?.mastodonAccessToken && !receivers.some((receiver) => receiver.name === "mastodon")) {
+    receivers.push({
+      name: "mastodon",
+      instanceUrl: String(credentials.mastodonInstanceUrl).replace(/\/+$/, ""),
+      accessToken: String(credentials.mastodonAccessToken)
+    });
+  }
+
+  if (receivers.length === 0) {
+    throw new Error("Missing live E2E receiver credentials");
+  }
+
+  return receivers;
+}
+
+async function mapReceivers(receivers, mapper) {
+  const entries = await Promise.all(receivers.map(async (receiver) => {
+    return [receiver.name, await mapper(receiver)];
+  }));
+  return Object.fromEntries(entries);
+}
+
+function everyReceiver(receiverResults, predicate) {
+  const entries = Object.values(receiverResults ?? {});
+  return entries.length > 0 && entries.every(predicate);
+}
+
+function receiverLog(log, receiver) {
+  return (message) => log(`${receiver.name}: ${message}`);
 }
 
 export function extractTunnelUrlFromLine(line) {
@@ -992,6 +1123,34 @@ async function createBlueskyImagePost({ identifier, appPassword, textPrefix, ima
   };
 }
 
+async function createBlueskyQuotePost({ identifier, appPassword, textPrefix, subjectUri, subjectCid }) {
+  if (typeof subjectUri !== "string" || !subjectUri || typeof subjectCid !== "string" || !subjectCid) {
+    throw new Error("subjectUri and subjectCid are required for quote post");
+  }
+
+  const marker = `${textPrefix} ${new Date().toISOString()}`;
+  const session = await createBlueskySession({ identifier, appPassword });
+  const created = await createBlueskyPostRecord({
+    session,
+    text: marker,
+    recordExtra: {
+      embed: {
+        $type: "app.bsky.embed.record",
+        record: {
+          uri: subjectUri,
+          cid: subjectCid
+        }
+      }
+    }
+  });
+
+  return {
+    marker,
+    uri: created.uri,
+    cid: created.cid
+  };
+}
+
 async function createBlueskyRepost({ identifier, appPassword, subjectUri, subjectCid }) {
   const session = await createBlueskySession({ identifier, appPassword });
   const nowIso = new Date().toISOString();
@@ -1264,6 +1423,94 @@ async function waitForTimelineMediaPost({
   return last;
 }
 
+async function waitForTimelineQuotePost({
+  instanceUrl,
+  accessToken,
+  marker,
+  expectedRemoteAcct,
+  expectedUriPrefix,
+  expectedVisibility,
+  expectedQuotedUri,
+  timeoutMs,
+  log
+}) {
+  const startedAt = Date.now();
+  let last = {
+    found: false,
+    statusId: null,
+    visibility: null,
+    quoteReferenceFound: false,
+    quoteState: null
+  };
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const statuses = await gtsApi({
+        instanceUrl,
+        accessToken,
+        path: "/api/v1/timelines/home?limit=80",
+        timeoutMs: 30_000
+      });
+
+      const list = Array.isArray(statuses) ? statuses : [];
+      const status = list.find((entry) => {
+        return statusMatchesExpectedBridge(entry, { expectedRemoteAcct, expectedUriPrefix })
+          && statusContainsMarker(entry, marker);
+      }) ?? null;
+      const visibility = typeof status?.visibility === "string" ? status.visibility : null;
+      const quote = extractTimelineQuote(status);
+      const content = typeof status?.content === "string" ? status.content : "";
+      const quoteReferenceFound = quote.references.includes(expectedQuotedUri)
+        || content.includes(expectedQuotedUri);
+
+      last = {
+        found: status !== null,
+        statusId: status?.id ?? null,
+        visibility,
+        quoteReferenceFound,
+        quoteState: quote.state
+      };
+
+      if (last.found && visibility === expectedVisibility && quoteReferenceFound) {
+        return last;
+      }
+
+      if (last.found) {
+        log(`timeline quote waiting; visibility=${String(visibility)} quoteState=${String(quote.state)} reference=${quoteReferenceFound}`);
+      }
+    } catch (error) {
+      log(`timeline quote retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(3_000);
+  }
+
+  return last;
+}
+
+function extractTimelineQuote(status) {
+  const references = [];
+  const quote = status?.quote ?? status?.quoted_status ?? null;
+  const state = typeof quote?.state === "string" ? quote.state : null;
+  const quotedStatus = quote?.quoted_status ?? quote;
+
+  for (const value of [
+    quotedStatus?.uri,
+    quotedStatus?.url,
+    status?.quote_url,
+    status?.quote_uri
+  ]) {
+    if (typeof value === "string" && value) {
+      references.push(value);
+    }
+  }
+
+  return {
+    state,
+    references
+  };
+}
+
 export function evaluateTimelineThread({
   statuses,
   rootMarker,
@@ -1480,6 +1727,80 @@ function hasUnlistedAudience(activityOrObject, { publicAudience, followers }) {
     && activityOrObject.to.includes(followers)
     && Array.isArray(activityOrObject?.cc)
     && activityOrObject.cc.includes(publicAudience);
+}
+
+async function waitForBridgeQuoteObject({
+  localBaseUrl,
+  publicBaseUrl,
+  did,
+  rkey,
+  marker,
+  quotedObjectId,
+  quotedDid,
+  timeoutMs,
+  log
+}) {
+  const startedAt = Date.now();
+  let last = {
+    ok: false,
+    found: false,
+    quoteMatches: false,
+    compatibilityFieldsMatch: false,
+    fallbackLink: false,
+    authorizationMatches: false,
+    authorizationFetchOk: false
+  };
+
+  const objectUrl = `${localBaseUrl}/ap/object/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`;
+  const publicObjectId = `${publicBaseUrl}/ap/object/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(objectUrl);
+      const body = response.ok ? await response.json() : null;
+      const content = typeof body?.content === "string" ? body.content : "";
+      const quoteAuthorization = typeof body?.quoteAuthorization === "string" ? body.quoteAuthorization : null;
+      let authorization = null;
+      if (quoteAuthorization) {
+        const authorizationPath = new URL(quoteAuthorization).pathname;
+        const authorizationResponse = await fetch(`${localBaseUrl}${authorizationPath}`);
+        authorization = authorizationResponse.ok ? await authorizationResponse.json() : null;
+      }
+
+      const found = response.ok && content.includes(marker);
+      const quoteMatches = body?.quote === quotedObjectId;
+      const compatibilityFieldsMatch = body?.quoteUrl === quotedObjectId
+        && body?.quoteUri === quotedObjectId
+        && body?._misskey_quote === quotedObjectId;
+      const fallbackLink = content.includes("quote-inline") && content.includes(quotedObjectId);
+      const authorizationMatches = authorization?.type === "QuoteAuthorization"
+        && authorization?.interactionTarget === quotedObjectId
+        && authorization?.interactingObject === publicObjectId
+        && authorization?.attributedTo === `${publicBaseUrl}/ap/actor/${encodeURIComponent(quotedDid)}`;
+      const authorizationFetchOk = authorization !== null;
+
+      last = {
+        ok: found && quoteMatches && compatibilityFieldsMatch && fallbackLink && authorizationMatches && authorizationFetchOk,
+        found,
+        quoteMatches,
+        compatibilityFieldsMatch,
+        fallbackLink,
+        authorizationMatches,
+        authorizationFetchOk
+      };
+
+      if (last.ok) {
+        return last;
+      }
+
+      log(`bridge quote waiting; found=${found} quote=${quoteMatches} compat=${compatibilityFieldsMatch} fallback=${fallbackLink} auth=${authorizationMatches}`);
+    } catch (error) {
+      log(`bridge quote retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(2_000);
+  }
+
+  return last;
 }
 
 async function waitForBridgeMediaObject({

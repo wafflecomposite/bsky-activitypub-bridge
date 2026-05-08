@@ -1,12 +1,46 @@
 import {
   actorFollowersId,
   actorId,
-  objectId
+  objectId,
+  quoteAuthorizationId
 } from "../domain/identifiers.js";
 import { blueskyBlobUrl, blueskyPostUrl } from "../bsky/web-url.js";
 
 const PUBLIC_AUDIENCE = "https://www.w3.org/ns/activitystreams#Public";
 const DEFAULT_VISIBILITY = "unlisted";
+const ACTIVITYSTREAMS_CONTEXT = "https://www.w3.org/ns/activitystreams";
+const QUOTE_CONTEXT = {
+  quote: {
+    "@id": "https://w3id.org/fep/044f#quote",
+    "@type": "@id"
+  },
+  quoteAuthorization: {
+    "@id": "https://w3id.org/fep/044f#quoteAuthorization",
+    "@type": "@id"
+  },
+  quoteUrl: {
+    "@id": "https://misskey-hub.net/ns#_misskey_quote",
+    "@type": "@id"
+  },
+  quoteUri: {
+    "@id": "https://fedibird.com/ns#quoteUri",
+    "@type": "@id"
+  },
+  _misskey_quote: {
+    "@id": "https://misskey-hub.net/ns#_misskey_quote",
+    "@type": "@id"
+  },
+  interactionPolicy: "https://gotosocial.org/ns#interactionPolicy",
+  canQuote: "https://gotosocial.org/ns#canQuote",
+  automaticApproval: {
+    "@id": "https://gotosocial.org/ns#automaticApproval",
+    "@type": "@id"
+  },
+  manualApproval: {
+    "@id": "https://gotosocial.org/ns#manualApproval",
+    "@type": "@id"
+  }
+};
 const LABEL_DISPLAY_NAMES = new Map([
   ["porn", "Adult Content"],
   ["adult", "Adult Content"],
@@ -41,19 +75,36 @@ export function mapBskyPostToActivityPub({
     facets: record.facets,
     baseUrl
   });
+  const quote = extractQuotePost({ baseUrl, did, rkey, embed: record.embed });
 
   const note = {
-    "@context": "https://www.w3.org/ns/activitystreams",
+    "@context": [ACTIVITYSTREAMS_CONTEXT, QUOTE_CONTEXT],
     id: noteId,
     type: "Note",
     attributedTo,
     url: blueskyPostUrl({ did, rkey }),
-    content: rendered.content,
+    content: quote ? appendQuoteFallback(rendered.content, quote.target) : rendered.content,
     published: record.createdAt,
     to: audience.to,
     cc: audience.cc,
-    tag: rendered.tags
+    tag: quote ? [...rendered.tags, buildQuoteLinkTag(quote.target)] : rendered.tags,
+    interactionPolicy: {
+      canQuote: {
+        automaticApproval: [PUBLIC_AUDIENCE],
+        manualApproval: []
+      }
+    }
   };
+
+  if (quote) {
+    note.quote = quote.target;
+    note.quoteUrl = quote.target;
+    note.quoteUri = quote.target;
+    note._misskey_quote = quote.target;
+    if (quote.authorization) {
+      note.quoteAuthorization = quote.authorization;
+    }
+  }
 
   const attachments = mapEmbedToAttachments({
     did,
@@ -100,7 +151,7 @@ export function mapBskyPostToActivityPub({
   }
 
   const create = {
-    "@context": "https://www.w3.org/ns/activitystreams",
+    "@context": [ACTIVITYSTREAMS_CONTEXT, QUOTE_CONTEXT],
     id: `${noteId}/activity/create`,
     type: "Create",
     actor: attributedTo,
@@ -286,6 +337,10 @@ function mapEmbedToAttachments({ did, embed, baseUrl }) {
   }
 
   if (type === "app.bsky.embed.record") {
+    if (extractQuotePostUri(embed)) {
+      return [];
+    }
+
     return mapRecordEmbed({ embed, baseUrl });
   }
 
@@ -408,6 +463,66 @@ function mapRecordEmbed({ embed, baseUrl }) {
     type: "Link",
     url: bridged ?? atUriToBskyWebUrl(uri) ?? uri
   }];
+}
+
+function extractQuotePost({ baseUrl, did, rkey, embed }) {
+  const uri = extractQuotePostUri(embed);
+  const parsed = parseAtPostUri(uri);
+  if (!parsed) {
+    return null;
+  }
+
+  const target = objectId(baseUrl, parsed.did, parsed.rkey);
+  return {
+    target,
+    parsed,
+    authorization: parsed.did === did
+      ? null
+      : quoteAuthorizationId(baseUrl, parsed.did, parsed.rkey, did, rkey)
+  };
+}
+
+function extractQuotePostUri(embed) {
+  if (!embed || typeof embed !== "object") {
+    return null;
+  }
+
+  if (embed.$type === "app.bsky.embed.recordWithMedia") {
+    return extractQuotePostUri(embed.record);
+  }
+
+  if (embed.$type !== "app.bsky.embed.record" && embed.$type !== "app.bsky.embed.record#view") {
+    return null;
+  }
+
+  const candidates = [
+    embed.record?.uri,
+    embed.record?.record?.uri,
+    embed.record?.value?.uri
+  ];
+
+  for (const candidate of candidates) {
+    if (parseAtPostUri(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function appendQuoteFallback(content, quoteTarget) {
+  const escapedTarget = escapeHtml(quoteTarget);
+  const href = escapeAttribute(quoteTarget);
+  return `${content}<span class="quote-inline"><br/>RE: <a href="${href}">${escapedTarget}</a></span>`;
+}
+
+function buildQuoteLinkTag(quoteTarget) {
+  return {
+    type: "Link",
+    mediaType: "application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"",
+    href: quoteTarget,
+    rel: ["https://w3id.org/fep/044f#quote", "https://misskey-hub.net/ns#_misskey_quote"]
+  };
 }
 
 function extractBlobCid(blob) {

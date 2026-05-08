@@ -18,6 +18,7 @@ import {
   decodeDidFromPath,
   objectId,
   parseAcctResource,
+  quoteAuthorizationId,
   webfingerSubject
 } from "./domain/identifiers.js";
 import { InMemoryBridgeStore } from "./storage/in-memory-store.js";
@@ -198,6 +199,10 @@ export async function dispatchBridgeRequest({
     }
 
     return handleGetActor({ url, headers, store, keyManager, publicBaseUrl: baseUrl, fetchImpl, profileCacheMaxAgeMs });
+  }
+
+  if (method === "GET" && url.pathname.includes("/quote-authorization/")) {
+    return handleGetQuoteAuthorization({ url, publicBaseUrl: baseUrl });
   }
 
   if (method === "GET" && url.pathname.startsWith("/ap/object/")) {
@@ -672,6 +677,71 @@ async function handleGetObject({ url, headers, store, publicBaseUrl, fetchImpl }
     status: 200,
     contentType: "application/activity+json",
     body: record.object
+  };
+}
+
+function handleGetQuoteAuthorization({ url, publicBaseUrl }) {
+  const match = /^\/ap\/object\/([^/]+)\/([^/]+)\/quote-authorization\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+  if (!match) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: "Invalid quote authorization path" }
+    };
+  }
+
+  let quotedDid;
+  let quotedRkey;
+  let quotingDid;
+  let quotingRkey;
+  try {
+    quotedDid = decodeDidFromPath(match[1]);
+    quotedRkey = decodeURIComponent(match[2]);
+    quotingDid = decodeDidFromPath(match[3]);
+    quotingRkey = decodeURIComponent(match[4]);
+  } catch (error) {
+    return {
+      status: 400,
+      contentType: "application/json",
+      body: { error: error.message }
+    };
+  }
+
+  return {
+    status: 200,
+    contentType: "application/activity+json",
+    body: buildQuoteAuthorizationDocument({
+      publicBaseUrl,
+      quotedDid,
+      quotedRkey,
+      quotingDid,
+      quotingRkey
+    })
+  };
+}
+
+function buildQuoteAuthorizationDocument({ publicBaseUrl, quotedDid, quotedRkey, quotingDid, quotingRkey }) {
+  return {
+    "@context": [
+      "https://www.w3.org/ns/activitystreams",
+      {
+        QuoteAuthorization: "https://w3id.org/fep/044f#QuoteAuthorization",
+        gts: "https://gotosocial.org/ns#",
+        interactingObject: {
+          "@id": "gts:interactingObject",
+          "@type": "@id"
+        },
+        interactionTarget: {
+          "@id": "gts:interactionTarget",
+          "@type": "@id"
+        }
+      }
+    ],
+    id: quoteAuthorizationId(publicBaseUrl, quotedDid, quotedRkey, quotingDid, quotingRkey),
+    type: "QuoteAuthorization",
+    attributedTo: actorId(publicBaseUrl, quotedDid),
+    interactingObject: objectId(publicBaseUrl, quotingDid, quotingRkey),
+    interactionTarget: objectId(publicBaseUrl, quotedDid, quotedRkey)
   };
 }
 

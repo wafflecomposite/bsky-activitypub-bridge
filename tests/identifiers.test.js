@@ -7,6 +7,7 @@ import {
   decodeDidFromPath,
   encodeDidForPath,
   parseAcctResource,
+  quoteAuthorizationId,
   webfingerSubject
 } from "../src/domain/identifiers.js";
 
@@ -40,5 +41,9 @@ test("actorId and webfingerSubject are deterministic", () => {
   assert.equal(actorId("https://bridge.example", did), "https://bridge.example/ap/actor/did%3Aplc%3Aabc123");
   assert.equal(actorFollowingId("https://bridge.example", did), "https://bridge.example/ap/actor/did%3Aplc%3Aabc123/following");
   assert.equal(actorFeaturedId("https://bridge.example", did), "https://bridge.example/ap/actor/did%3Aplc%3Aabc123/featured");
+  assert.equal(
+    quoteAuthorizationId("https://bridge.example", "did:plc:quoted", "root", "did:plc:quoting", "quote"),
+    "https://bridge.example/ap/object/did%3Aplc%3Aquoted/root/quote-authorization/did%3Aplc%3Aquoting/quote"
+  );
   assert.equal(webfingerSubject("alice.bsky.social", "bridge.example"), "acct:alice.bsky.social@bridge.example");
 });

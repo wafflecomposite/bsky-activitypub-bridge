@@ -34,6 +34,7 @@ Bluesky side:
 - DID is canonical; handles are aliases.
 - Unknown handles can be resolved/materialized on WebFinger or resolver lookup.
 - Jetstream ingest supports scoped wanted DIDs/collections, profile update fanout, cursor/dedup state, reconnect rewind, and client-side DID filtering.
+- Jetstream followed-DID subscriptions are sharded by `JETSTREAM_MAX_DIDS_PER_STREAM` so the bridge can stay below per-connection `wantedDids` limits while keeping per-shard cursor/dedup state.
 - Unfiltered Jetstream is blocked by default unless `UNSAFE_ALLOW_UNFILTERED_JETSTREAM` is set.
 - Post mapper covers text facets, links, mentions, hashtags, replies/thread context, original Bluesky web URLs, unlisted AP audiences, Bluesky content labels/CWs with sensitive media flags, media/external embeds, FEP-044f quote posts with compatibility fields and quote authorization stamps, reposts, updates, and deletes.
 
@@ -63,8 +64,8 @@ Live verification:
 - `RUN_LIVE_E2E=1 npm run e2e:live:ci`
 
 Last live verification on 2026-05-08:
-- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS + Mastodon through `https://discharge-notes-modern-patio.trycloudflare.com`.
-- Confirmed served actor `type: "Service"`, remote account API `bot: true` on both receivers, original Bluesky profile/post URLs exposed where receivers support them while AP URI fetch/import still works, follow/unfollow/refollow state transitions update bridge followers as expected on both receivers, thread/media posts arrive as `unlisted`, Mastodon accepts quote posts, profile description changes fan out as AP actor `Update`, and labeled media maps to reason-only CW plus sensitive media state.
+- `JETSTREAM_MAX_DIDS_PER_STREAM=1 LIVE_E2E_EXTRA_WANTED_DIDS=did:plc:22tkvmk7w562u3vueqeufkoa npm run e2e:live` returned `ok: true` against real Bluesky + GtS + Mastodon through `https://should-only-velocity-letters.trycloudflare.com`.
+- Confirmed served actor `type: "Service"`, remote account API `bot: true` on both receivers, original Bluesky profile/post URLs exposed where receivers support them while AP URI fetch/import still works, follow/unfollow/refollow state transitions update bridge followers as expected on both receivers, Jetstream sharded into 2 live connections with one wanted DID each, thread/media posts arrive as `unlisted`, Mastodon accepts quote posts, profile description changes fan out as AP actor `Update`, and labeled media maps to reason-only CW plus sensitive media state.
 
 Do not mark live federation work complete unless the live harness passes or the failure is intentionally documented with artifacts.
 

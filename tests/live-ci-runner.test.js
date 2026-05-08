@@ -48,7 +48,9 @@ test("buildLiveHarnessOptions pulls credential and media paths", () => {
       LIVE_E2E_CREDENTIALS_FILE: "/tmp/creds.json",
       LIVE_E2E_CREDENTIALS_MD_FILE: "/tmp/creds.md",
       LIVE_E2E_MEDIA_FIXTURE: "/tmp/image.jpg",
-      LIVE_E2E_ENABLE_HTTP_MESSAGE_SIGNATURES: "1"
+      LIVE_E2E_ENABLE_HTTP_MESSAGE_SIGNATURES: "1",
+      JETSTREAM_MAX_DIDS_PER_STREAM: "2",
+      LIVE_E2E_EXTRA_WANTED_DIDS: "did:plc:extra1,did:plc:extra2"
     }
   });
 
@@ -56,6 +58,8 @@ test("buildLiveHarnessOptions pulls credential and media paths", () => {
     credentialsFile: "/tmp/creds.json",
     credentialsMarkdownFile: "/tmp/creds.md",
     mediaFixturePath: "/tmp/image.jpg",
-    messageSignaturesEnabled: true
+    messageSignaturesEnabled: true,
+    jetstreamMaxDidsPerStream: 2,
+    extraWantedDids: ["did:plc:extra1", "did:plc:extra2"]
   });
 });

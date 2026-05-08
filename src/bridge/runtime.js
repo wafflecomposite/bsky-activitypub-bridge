@@ -8,8 +8,12 @@ import { InMemoryBridgeStore } from "../storage/in-memory-store.js";
 export class BridgeRuntime {
   #processor;
   #worker;
-  #jetstreamClient = null;
+  #jetstreamClients = new Map();
   #jetstreamDidRefreshTimer = null;
+  #jetstreamOptions = null;
+  #jetstreamTimers = globalThis;
+  #baseUrl;
+  #postVisibility;
   #metrics;
 
   constructor({ baseUrl, store = new InMemoryBridgeStore(), state = new InMemoryJetstreamState(), queue = new InMemoryDeliveryQueue(), keyManager = new InMemoryKeyManager(), fetchImpl = fetch, shardId = "default", postVisibility = "unlisted", onTransportAttempt = null, onTransportResult = null, messageSignaturesEnabled = false }) {
@@ -18,6 +22,8 @@ export class BridgeRuntime {
     this.state = state;
     this.keyManager = keyManager;
     this.shardId = shardId;
+    this.#baseUrl = baseUrl;
+    this.#postVisibility = postVisibility;
 
     this.#processor = new JetstreamProcessor({
       state,
@@ -81,39 +87,28 @@ export class BridgeRuntime {
     jetstreamUrl,
     reconnectDelayMs = 1000,
     rewindSeconds = 5,
+    maxDidsPerStream = 8000,
     WebSocketImpl = WebSocket,
     timers = globalThis
   } = {}) {
-    if (this.#jetstreamClient) {
-      this.#jetstreamClient.stop();
-    }
-
-    if (this.#jetstreamDidRefreshTimer) {
-      timers.clearInterval(this.#jetstreamDidRefreshTimer);
-      this.#jetstreamDidRefreshTimer = null;
-    }
+    this.stopJetstream({ timers: this.#jetstreamTimers ?? timers });
+    this.#jetstreamTimers = timers;
+    this.#jetstreamOptions = {
+      wantedCollections,
+      requireWantedDids: !allowUnfiltered,
+      jetstreamUrl,
+      reconnectDelayMs,
+      rewindSeconds,
+      maxDidsPerStream: normalizeMaxDidsPerStream(maxDidsPerStream),
+      WebSocketImpl,
+      timers
+    };
 
     const initialWantedDids = wantedDidsProvider
       ? normalizeWantedDids(wantedDidsProvider())
       : normalizeWantedDids(wantedDids);
 
-    this.#jetstreamClient = new JetstreamClient({
-      processor: {
-        process: (event) => this.ingestJetstreamEvent(event)
-      },
-      state: this.state,
-      shardId: this.shardId,
-      wantedDids: initialWantedDids,
-      requireWantedDids: !allowUnfiltered,
-      wantedCollections,
-      jetstreamUrl,
-      reconnectDelayMs,
-      rewindSeconds,
-      WebSocketImpl,
-      timers
-    });
-
-    this.#jetstreamClient.start();
+    this.#syncJetstreamClients(initialWantedDids);
 
     if (wantedDidsProvider && wantedDidsRefreshMs > 0 && typeof timers.setInterval === "function") {
       this.#jetstreamDidRefreshTimer = timers.setInterval(() => {
@@ -127,28 +122,36 @@ export class BridgeRuntime {
   }
 
   stopJetstream({ timers = globalThis } = {}) {
+    const activeTimers = this.#jetstreamTimers ?? timers;
     if (this.#jetstreamDidRefreshTimer) {
-      timers.clearInterval(this.#jetstreamDidRefreshTimer);
+      activeTimers.clearInterval(this.#jetstreamDidRefreshTimer);
       this.#jetstreamDidRefreshTimer = null;
     }
 
-    if (!this.#jetstreamClient) {
-      return;
+    for (const client of this.#jetstreamClients.values()) {
+      client.stop();
     }
 
-    this.#jetstreamClient.stop();
-    this.#jetstreamClient = null;
+    this.#jetstreamClients.clear();
+    this.#jetstreamOptions = null;
   }
 
   updateJetstreamWantedDids(wantedDids) {
-    if (!this.#jetstreamClient) {
+    if (!this.#jetstreamOptions) {
       return;
     }
 
-    this.#jetstreamClient.setWantedDids(wantedDids);
+    this.#syncJetstreamClients(normalizeWantedDids(wantedDids));
   }
 
   getMetrics() {
+    const jetstreamShards = Array.from(this.#jetstreamClients.entries())
+      .map(([shardId, client]) => ({
+        shardId,
+        wantedDidCount: client.getWantedDidCount?.() ?? 0,
+        connectionUrl: client.getCurrentConnectionUrl?.() ?? null
+      }));
+
     return {
       queueDepth: typeof this.queue?.size === "function" ? this.queue.size() : null,
       delivery: {
@@ -160,10 +163,70 @@ export class BridgeRuntime {
         lastResult: this.#metrics.lastResult
       },
       jetstream: {
-        running: this.#jetstreamClient !== null,
-        wantedDidCount: this.#jetstreamClient?.getWantedDidCount?.() ?? 0
+        running: this.#jetstreamClients.size > 0,
+        wantedDidCount: jetstreamShards.reduce((sum, shard) => sum + shard.wantedDidCount, 0),
+        shardCount: this.#jetstreamClients.size,
+        maxDidsPerStream: this.#jetstreamOptions?.maxDidsPerStream ?? null,
+        shards: jetstreamShards
       }
     };
+  }
+
+  #syncJetstreamClients(wantedDids) {
+    if (!this.#jetstreamOptions) {
+      return;
+    }
+
+    const shardSpecs = planJetstreamShards({
+      baseShardId: this.shardId,
+      wantedDids,
+      maxDidsPerStream: this.#jetstreamOptions.maxDidsPerStream,
+      requireWantedDids: this.#jetstreamOptions.requireWantedDids
+    });
+    const wantedShardIds = new Set(shardSpecs.map((shard) => shard.shardId));
+
+    for (const [shardId, client] of this.#jetstreamClients.entries()) {
+      if (!wantedShardIds.has(shardId)) {
+        client.stop();
+        this.#jetstreamClients.delete(shardId);
+      }
+    }
+
+    for (const shard of shardSpecs) {
+      const existing = this.#jetstreamClients.get(shard.shardId);
+      if (existing) {
+        existing.setWantedDids(shard.wantedDids);
+        continue;
+      }
+
+      const processor = new JetstreamProcessor({
+        state: this.state,
+        queue: this.queue,
+        store: this.store,
+        keyManager: this.keyManager,
+        baseUrl: this.#baseUrl,
+        shardId: shard.shardId,
+        postVisibility: this.#postVisibility
+      });
+      const client = new JetstreamClient({
+        processor: {
+          process: (event) => processor.process(event)
+        },
+        state: this.state,
+        shardId: shard.shardId,
+        wantedDids: shard.wantedDids,
+        requireWantedDids: this.#jetstreamOptions.requireWantedDids,
+        wantedCollections: this.#jetstreamOptions.wantedCollections,
+        jetstreamUrl: this.#jetstreamOptions.jetstreamUrl,
+        reconnectDelayMs: this.#jetstreamOptions.reconnectDelayMs,
+        rewindSeconds: this.#jetstreamOptions.rewindSeconds,
+        WebSocketImpl: this.#jetstreamOptions.WebSocketImpl,
+        timers: this.#jetstreamOptions.timers
+      });
+
+      this.#jetstreamClients.set(shard.shardId, client);
+      client.start();
+    }
   }
 
   #recordDeliveryResult(result) {
@@ -191,10 +254,45 @@ export class BridgeRuntime {
   }
 }
 
+export function planJetstreamShards({
+  baseShardId = "default",
+  wantedDids = [],
+  maxDidsPerStream = 8000,
+  requireWantedDids = true
+} = {}) {
+  const normalized = normalizeWantedDids(wantedDids);
+  const cap = normalizeMaxDidsPerStream(maxDidsPerStream);
+
+  if (normalized.length === 0) {
+    return requireWantedDids
+      ? []
+      : [{ shardId: baseShardId, wantedDids: [] }];
+  }
+
+  const shards = [];
+  for (let offset = 0; offset < normalized.length; offset += cap) {
+    const index = shards.length;
+    shards.push({
+      shardId: index === 0 ? baseShardId : `${baseShardId}:${index}`,
+      wantedDids: normalized.slice(offset, offset + cap)
+    });
+  }
+
+  return shards;
+}
+
 function normalizeWantedDids(wantedDids) {
   if (!Array.isArray(wantedDids)) {
     return [];
   }
 
   return [...new Set(wantedDids.filter((did) => typeof did === "string" && did.trim()).map((did) => did.trim()))].sort();
+}
+
+function normalizeMaxDidsPerStream(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(1, Math.trunc(value));
+  }
+
+  return 8000;
 }

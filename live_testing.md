@@ -56,6 +56,8 @@ Useful options:
 - `LIVE_E2E_CLEANUP=1`
 - `LIVE_E2E_ARTIFACTS_BASE_DIR` default `.data/live-e2e-artifacts`
 - `LIVE_E2E_RUN_ID`
+- `JETSTREAM_MAX_DIDS_PER_STREAM` default `8000`
+- `LIVE_E2E_EXTRA_WANTED_DIDS` optional comma-separated synthetic DIDs to force multiple live Jetstream shards during verification
 
 ## What The Harness Checks
 

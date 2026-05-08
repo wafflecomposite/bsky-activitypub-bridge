@@ -116,6 +116,7 @@ export function createBridgeApplication({
         jetstreamUrl: jetstream.url,
         reconnectDelayMs: jetstream.reconnectDelayMs ?? 1000,
         rewindSeconds: jetstream.rewindSeconds ?? 5,
+        maxDidsPerStream: jetstream.maxDidsPerStream ?? 8000,
         WebSocketImpl: jetstream.WebSocketImpl ?? WebSocket,
         timers
       });

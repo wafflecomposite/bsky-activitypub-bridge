@@ -1,14 +1,14 @@
 # Jetstream Scaling Notes
 
-This is a future-task note, not an implementation plan.
+This records the scaling investigation and implementation strategy.
 
 ## Current State
 
-- The bridge currently uses one `JetstreamClient` from `BridgeRuntime.startJetstream()`.
-- `wantedDidsProvider` returns all followed DIDs, and the client sends the full list as `wantedDids` query params or `options_update` payload.
+- The bridge now shards followed-DID subscriptions across multiple `JetstreamClient` instances from `BridgeRuntime.startJetstream()`.
+- `wantedDidsProvider` returns all followed DIDs, and the runtime splits the normalized list into per-stream `wantedDids` chunks.
 - The bridge also applies client-side DID filtering, which is useful as defense in depth but does not remove the upstream wanted-DID limit.
-- Jetstream cursor and dedup state are already keyed by `shardId`, so the persistence model can support multiple stream shards.
-- There is no current internal cap, warning, or sharding behavior. If the followed DID list exceeds Jetstream service limits, the single subscription can fail at the service boundary.
+- Jetstream cursor and dedup state are keyed by `shardId`, so each stream shard advances independently.
+- The internal cap is configurable with `JETSTREAM_MAX_DIDS_PER_STREAM`, defaulting to `8000`.
 
 ## External Limits And Sources
 
@@ -84,4 +84,4 @@ Polling public AppView/repo APIs per followed account should not be primary inge
 
 ## Recommendation
 
-Implement Jetstream DID sharding first, behind a configurable shard cap. Keep full-firehose ingestion as a separate future strategy so the mapper, store, delivery queue, and ActivityPub surface remain reusable.
+Jetstream DID sharding is now the implemented first step, behind a configurable shard cap. Keep full-firehose ingestion as a separate future strategy so the mapper, store, delivery queue, and ActivityPub surface remain reusable.

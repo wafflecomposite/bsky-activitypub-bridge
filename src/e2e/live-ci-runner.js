@@ -19,7 +19,9 @@ export function buildLiveHarnessOptions({ env = process.env } = {}) {
     credentialsFile: env.LIVE_E2E_CREDENTIALS_FILE ?? "test_credentials.json",
     credentialsMarkdownFile: env.LIVE_E2E_CREDENTIALS_MD_FILE ?? "test_credentials.md",
     mediaFixturePath: env.LIVE_E2E_MEDIA_FIXTURE ?? "tests/data/example_image.jpg",
-    messageSignaturesEnabled: parseBooleanFlag(env.LIVE_E2E_ENABLE_HTTP_MESSAGE_SIGNATURES, false)
+    messageSignaturesEnabled: parseBooleanFlag(env.LIVE_E2E_ENABLE_HTTP_MESSAGE_SIGNATURES, false),
+    jetstreamMaxDidsPerStream: parsePositiveInteger(env.JETSTREAM_MAX_DIDS_PER_STREAM, 8000),
+    extraWantedDids: parseList(env.LIVE_E2E_EXTRA_WANTED_DIDS)
   };
 }
 
@@ -38,6 +40,26 @@ function parseBooleanFlag(value, fallback) {
   }
 
   return fallback;
+}
+
+function parsePositiveInteger(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.max(1, parsed) : fallback;
+}
+
+function parseList(value) {
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function formatRunTimestamp(date) {

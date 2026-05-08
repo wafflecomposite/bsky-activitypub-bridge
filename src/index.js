@@ -27,7 +27,8 @@ const app = createBridgeApplication({
     allowUnfiltered: parseBoolean(process.env.UNSAFE_ALLOW_UNFILTERED_JETSTREAM, false),
     wantedDidsRefreshMs: parseInteger(process.env.JETSTREAM_WANTED_DIDS_REFRESH_MS, 30_000),
     reconnectDelayMs: parseInteger(process.env.JETSTREAM_RECONNECT_DELAY_MS, 1000),
-    rewindSeconds: parseInteger(process.env.JETSTREAM_REWIND_SECONDS, 5)
+    rewindSeconds: parseInteger(process.env.JETSTREAM_REWIND_SECONDS, 5),
+    maxDidsPerStream: parseInteger(process.env.JETSTREAM_MAX_DIDS_PER_STREAM, 8000)
   },
   delivery: {
     drainIntervalMs: parseInteger(process.env.DELIVERY_DRAIN_INTERVAL_MS, 1000),

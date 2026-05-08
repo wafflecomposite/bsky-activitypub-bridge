@@ -19,6 +19,8 @@ export async function runLiveE2EHarness({
   cloudflaredPath = "./tools/bin/cloudflared",
   mediaFixturePath = "tests/data/example_image.jpg",
   messageSignaturesEnabled = false,
+  jetstreamMaxDidsPerStream = 8000,
+  extraWantedDids = [],
   cleanup = false,
   workDir = null,
   log = () => {}
@@ -45,6 +47,8 @@ export async function runLiveE2EHarness({
 
     const tunnelUrl = tunnel.url;
     const did = await resolveDidFromHandle(resolvedCredentials.blueskyIdentifier);
+    const liveJetstreamMaxDidsPerStream = normalizePositiveInteger(jetstreamMaxDidsPerStream, 8000);
+    const liveWantedDids = normalizeWantedDids([did, ...extraWantedDids]);
     const expectedBlueskyProfileUrl = blueskyProfileUrl({
       did,
       handle: resolvedCredentials.blueskyIdentifier
@@ -160,9 +164,10 @@ export async function runLiveE2EHarness({
       jetstream: {
         enabled: true,
         autoFollowedDids: false,
-        wantedDids: [did],
+        wantedDids: liveWantedDids,
         wantedCollections: ["app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.actor.profile"],
-        wantedDidsRefreshMs: 0
+        wantedDidsRefreshMs: 0,
+        maxDidsPerStream: liveJetstreamMaxDidsPerStream
       },
       delivery: {
         drainIntervalMs: 500,
@@ -361,6 +366,11 @@ export async function runLiveE2EHarness({
       log
     });
     const runtimeMetrics = app.getRuntime()?.getMetrics() ?? null;
+    const jetstreamShardCheck = evaluateJetstreamShardMetrics({
+      metrics: runtimeMetrics?.jetstream,
+      expectedWantedDidCount: liveWantedDids.length,
+      maxDidsPerStream: liveJetstreamMaxDidsPerStream
+    });
 
     const summary = {
       ok: everyReceiver(receiverAccounts, (entry) => entry.followState.following === true
@@ -401,6 +411,7 @@ export async function runLiveE2EHarness({
         && bridgeLabeledMediaObject.attachmentSensitive === true
         && bridgeLabeledMediaObject.summary === LIVE_E2E_CONTENT_WARNING
         && bridgeRepost.found === true
+        && jetstreamShardCheck.ok === true
         && (runtimeMetrics?.delivery?.delivered ?? 0) >= receivers.length * 3,
       tunnelUrl,
       dataDir: tempDir,
@@ -433,6 +444,7 @@ export async function runLiveE2EHarness({
       bridgeLabeledMediaObject,
       postedRepost,
       bridgeRepost,
+      jetstreamShardCheck,
       runtimeMetrics
     };
 
@@ -592,6 +604,50 @@ async function mapReceivers(receivers, mapper) {
 function everyReceiver(receiverResults, predicate) {
   const entries = Object.values(receiverResults ?? {});
   return entries.length > 0 && entries.every(predicate);
+}
+
+function evaluateJetstreamShardMetrics({ metrics, expectedWantedDidCount, maxDidsPerStream }) {
+  const shards = Array.isArray(metrics?.shards) ? metrics.shards : [];
+  const shardCounts = shards.map((shard) => shard.wantedDidCount ?? 0);
+  const expectedShardCount = expectedWantedDidCount === 0
+    ? 0
+    : Math.ceil(expectedWantedDidCount / maxDidsPerStream);
+  const shardsUnderCap = shardCounts.every((count) => count <= maxDidsPerStream);
+
+  return {
+    ok: metrics?.running === true
+      && metrics?.wantedDidCount === expectedWantedDidCount
+      && metrics?.shardCount === expectedShardCount
+      && metrics?.maxDidsPerStream === maxDidsPerStream
+      && shardsUnderCap,
+    expectedWantedDidCount,
+    expectedShardCount,
+    maxDidsPerStream,
+    running: metrics?.running ?? false,
+    wantedDidCount: metrics?.wantedDidCount ?? null,
+    shardCount: metrics?.shardCount ?? null,
+    shardCounts,
+    shardsUnderCap
+  };
+}
+
+function normalizeWantedDids(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return [...new Set(values
+    .filter((value) => typeof value === "string" && value.trim())
+    .map((value) => value.trim()))]
+    .sort();
+}
+
+function normalizePositiveInteger(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(1, Math.trunc(value));
+  }
+
+  return fallback;
 }
 
 function receiverLog(log, receiver) {

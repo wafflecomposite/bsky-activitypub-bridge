@@ -933,6 +933,63 @@ test("dispatchBridgeRequest resolves remote actor and queues Accept delivery", a
   assert.equal(followEvents.some((event) => event.event === "follow.accept.enqueued" && event.destination === "https://remote.example/users/bob/inbox"), true);
 });
 
+test("dispatchBridgeRequest materializes missing actor before accepting Follow", async () => {
+  const baseUrl = "https://bridge.example";
+  const store = new InMemoryBridgeStore();
+  const keyManager = new InMemoryKeyManager();
+  const deliveryQueue = new InMemoryDeliveryQueue();
+  const followEvents = [];
+
+  const followRes = await dispatchBridgeRequest({
+    method: "POST",
+    rawUrl: "/ap/actor/did%3Aplc%3Anewactor/inbox",
+    headers: { host: "bridge.example" },
+    bodyText: JSON.stringify({
+      id: "https://remote.example/activities/follow-new",
+      type: "Follow",
+      actor: "https://remote.example/users/bob",
+      object: "https://bridge.example/ap/actor/did%3Aplc%3Anewactor"
+    }),
+    store,
+    keyManager,
+    baseUrl,
+    deliveryQueue,
+    followLogger: (event) => followEvents.push(event),
+    fetchImpl: async (url) => {
+      if (url === "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=did%3Aplc%3Anewactor") {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            did: "did:plc:newactor",
+            handle: "newactor.bsky.social"
+          })
+        };
+      }
+
+      if (url === "https://remote.example/users/bob") {
+        return {
+          status: 200,
+          json: async () => ({
+            id: "https://remote.example/users/bob",
+            inbox: "https://remote.example/users/bob/inbox"
+          })
+        };
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }
+  });
+
+  assert.equal(followRes.status, 202);
+  assert.equal(store.getActorByDid("did:plc:newactor")?.handle, "newactor.bsky.social");
+  assert.equal(store.listFollowers("did:plc:newactor").length, 1);
+  assert.equal(deliveryQueue.size(), 1);
+  assert.equal(followEvents.some((event) => event.event === "inbox.actor_materialize.start"), true);
+  assert.equal(followEvents.some((event) => event.event === "inbox.actor.ok" && event.handle === "newactor.bsky.social"), true);
+  assert.equal(followEvents.some((event) => event.event === "follow.accept.enqueued"), true);
+});
+
 test("dispatchBridgeRequest reuses remote actor cache across follows", async () => {
   const baseUrl = "https://bridge.example";
   const store = new InMemoryBridgeStore();

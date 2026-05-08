@@ -213,7 +213,7 @@ export async function dispatchBridgeRequest({
   }
 
   if (method === "POST" && url.pathname.startsWith("/ap/actor/") && url.pathname.endsWith("/inbox")) {
-    return handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier, followLogger });
+    return handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl: baseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier, profileCacheMaxAgeMs, followLogger });
   }
 
   return {
@@ -1092,7 +1092,7 @@ function renderDiscoveryExample(example) {
   return `<a href="${escapeHtml(href)}"><code>${escapeHtml(example.label)}</code></a>`;
 }
 
-async function handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier, followLogger }) {
+async function handlePostInbox({ method, url, headers, store, keyManager, publicBaseUrl, bodyText, fetchImpl, deliveryQueue, actorCache, inboxSignatureVerifier, profileCacheMaxAgeMs, followLogger }) {
   let did;
   try {
     const didPath = url.pathname.slice("/ap/actor/".length, -"/inbox".length);
@@ -1110,7 +1110,22 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
     };
   }
 
-  if (!store.getActorByDid(did)) {
+  let targetActorProfile = store.getActorByDid(did);
+  if (!targetActorProfile) {
+    logFollowEvent(followLogger, {
+      event: "inbox.actor_materialize.start",
+      did,
+      path: url.pathname
+    });
+    targetActorProfile = await ensureActorProfile({
+      store,
+      fetchImpl,
+      did,
+      cacheMaxAgeMs: profileCacheMaxAgeMs
+    });
+  }
+
+  if (!targetActorProfile) {
     logFollowEvent(followLogger, {
       event: "inbox.actor_missing",
       did,
@@ -1122,6 +1137,13 @@ async function handlePostInbox({ method, url, headers, store, keyManager, public
       body: { error: "Bridge actor not found" }
     };
   }
+
+  logFollowEvent(followLogger, {
+    event: "inbox.actor.ok",
+    did,
+    path: url.pathname,
+    handle: targetActorProfile.handle ?? null
+  });
 
   if (inboxSignatureVerifier) {
     logFollowEvent(followLogger, {

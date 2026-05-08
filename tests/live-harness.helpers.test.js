@@ -137,19 +137,38 @@ test("evaluateTimelineThread detects linked reply by status id", () => {
   const result = evaluateTimelineThread({
     statuses: [
       {
+        id: "099",
+        content: "<p>Bridge automated live e2e root 2026-03-04T00:00:00.000Z</p>",
+        uri: "https://old-bridge.example/ap/object/did%3Aplc%3Aalice/post1",
+        visibility: "public",
+        account: {
+          acct: "alice.bsky.social@old-bridge.example"
+        }
+      },
+      {
         id: "100",
         content: "<p>Bridge automated live e2e root 2026-03-04T00:00:00.000Z</p>",
-        uri: "https://gts.example/users/a/statuses/100"
+        uri: "https://gts.example/users/a/statuses/100",
+        visibility: "unlisted",
+        account: {
+          acct: "alice.bsky.social@bridge.example"
+        }
       },
       {
         id: "101",
         content: "<p>Bridge automated live e2e reply 2026-03-04T00:00:00.000Z</p>",
         in_reply_to_id: "100",
-        uri: "https://gts.example/users/a/statuses/101"
+        uri: "https://gts.example/users/a/statuses/101",
+        visibility: "unlisted",
+        account: {
+          acct: "alice.bsky.social@bridge.example"
+        }
       }
     ],
     rootMarker: "Bridge automated live e2e root 2026-03-04T00:00:00.000Z",
-    replyMarker: "Bridge automated live e2e reply 2026-03-04T00:00:00.000Z"
+    replyMarker: "Bridge automated live e2e reply 2026-03-04T00:00:00.000Z",
+    expectedRemoteAcct: "alice.bsky.social@bridge.example",
+    expectedVisibility: "unlisted"
   });
 
   assert.equal(result.rootFound, true);
@@ -157,6 +176,10 @@ test("evaluateTimelineThread detects linked reply by status id", () => {
   assert.equal(result.threadLinked, true);
   assert.equal(result.rootStatusId, "100");
   assert.equal(result.replyStatusId, "101");
+  assert.equal(result.rootVisibility, "unlisted");
+  assert.equal(result.replyVisibility, "unlisted");
+  assert.equal(result.rootVisibilityMatches, true);
+  assert.equal(result.replyVisibilityMatches, true);
 });
 
 test("evaluateTimelineThread reports unlinked markers when reply relation missing", () => {

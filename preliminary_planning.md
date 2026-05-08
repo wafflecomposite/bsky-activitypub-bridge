@@ -56,6 +56,7 @@ Actor:
 
 Post:
 - `app.bsky.feed.post` create maps to `Create` with `Note`.
+- Default bridged post audience is unlisted: followers collection in `to`, ActivityPub public audience in `cc`.
 - Note `url` points to the original Bluesky web post; the bridge AP object ID remains the note `id`.
 - Text facets map to safe HTML and ActivityPub tags. Use UTF-8 byte ranges and drop overlapping facets.
 - Replies map to `inReplyTo`; root/thread continuity maps to ActivityPub `context` where possible.

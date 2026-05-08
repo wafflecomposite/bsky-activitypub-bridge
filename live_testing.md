@@ -68,10 +68,10 @@ The automated harness:
 - imports an unfollowed bridge object through GtS status search
 - discovers and follows the bridged account from GtS
 - temporarily updates the Bluesky profile description and verifies GtS receives the ActivityPub actor `Update`, then restores the original profile
-- publishes a real Bluesky thread and verifies delivery/linkage in GtS
-- verifies bridge outbox/object endpoints for the thread
-- publishes a media post and verifies GtS plus AP attachment output
-- publishes a labeled media post and verifies GtS plus AP CW/sensitive-media output
+- publishes a real Bluesky thread and verifies delivery/linkage plus `unlisted` visibility in GtS
+- verifies bridge outbox/object endpoints for the thread, including unlisted ActivityPub addressing
+- publishes a media post and verifies GtS `unlisted` visibility plus AP attachment output
+- publishes a labeled media post and verifies GtS plus AP CW/sensitive-media output with `unlisted` visibility
 - publishes a repost and verifies ActivityPub `Announce`
 - waits for delivery queue drain and checks runtime delivery metrics
 
@@ -107,4 +107,4 @@ npm start
 - Keep `DATA_DIR` stable during a run so actor signing keys survive restarts.
 - Existing remote account cache entries may keep an old actor type. If a bridged profile was discovered before the bridge emitted ActivityStreams `Service`, force a remote refresh or use a fresh bridge domain before judging the bot flag.
 - If Jetstream is off during the posting phase, Bluesky posts will not deliver.
-- Live automation uses `BRIDGE_POST_VISIBILITY=unlisted` to avoid public-feed noise while still delivering to followers.
+- Live automation uses and verifies `BRIDGE_POST_VISIBILITY=unlisted` to avoid public-feed noise while still delivering to followers.

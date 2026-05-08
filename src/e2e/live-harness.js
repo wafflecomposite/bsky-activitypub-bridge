@@ -184,6 +184,9 @@ export async function runLiveE2EHarness({
       accessToken: resolvedCredentials.gtsAccessToken,
       rootMarker: postedThread.root.marker,
       replyMarker: postedThread.reply.marker,
+      expectedRemoteAcct: remoteAcct,
+      expectedUriPrefix: tunnelUrl,
+      expectedVisibility: "unlisted",
       timeoutMs: 180_000,
       log
     });
@@ -228,6 +231,9 @@ export async function runLiveE2EHarness({
       instanceUrl: resolvedCredentials.gtsInstanceUrl,
       accessToken: resolvedCredentials.gtsAccessToken,
       marker: postedMedia.marker,
+      expectedRemoteAcct: remoteAcct,
+      expectedUriPrefix: tunnelUrl,
+      expectedVisibility: "unlisted",
       timeoutMs: 180_000,
       log
     });
@@ -257,6 +263,9 @@ export async function runLiveE2EHarness({
       timeoutMs: 180_000,
       expectedSensitive: true,
       expectedSpoilerText: LIVE_E2E_CONTENT_WARNING,
+      expectedRemoteAcct: remoteAcct,
+      expectedUriPrefix: tunnelUrl,
+      expectedVisibility: "unlisted",
       log
     });
 
@@ -316,12 +325,16 @@ export async function runLiveE2EHarness({
         && profileUpdate.remoteNoteHasMarker === true
         && profileRestore.restored === true
         && timelineThread.threadLinked === true
+        && timelineThread.rootVisibility === "unlisted"
+        && timelineThread.replyVisibility === "unlisted"
         && bridgeReadSurface.ok === true
         && timelineMedia.hasMediaAttachment === true
+        && timelineMedia.visibility === "unlisted"
         && bridgeMediaObject.hasAttachment === true
         && timelineLabeledMedia.hasMediaAttachment === true
         && timelineLabeledMedia.sensitive === true
         && timelineLabeledMedia.spoilerText === LIVE_E2E_CONTENT_WARNING
+        && timelineLabeledMedia.visibility === "unlisted"
         && bridgeLabeledMediaObject.hasAttachment === true
         && bridgeLabeledMediaObject.noteSensitive === true
         && bridgeLabeledMediaObject.attachmentSensitive === true
@@ -1109,14 +1122,28 @@ async function waitForProfileUpdate({
   return last;
 }
 
-async function waitForTimelineThread({ instanceUrl, accessToken, rootMarker, replyMarker, timeoutMs, log }) {
+async function waitForTimelineThread({
+  instanceUrl,
+  accessToken,
+  rootMarker,
+  replyMarker,
+  expectedRemoteAcct = null,
+  expectedUriPrefix = null,
+  expectedVisibility = null,
+  timeoutMs,
+  log
+}) {
   const startedAt = Date.now();
   let lastEvaluation = {
     rootFound: false,
     replyFound: false,
     threadLinked: false,
     rootStatusId: null,
-    replyStatusId: null
+    replyStatusId: null,
+    rootVisibility: null,
+    replyVisibility: null,
+    rootVisibilityMatches: expectedVisibility === null ? null : false,
+    replyVisibilityMatches: expectedVisibility === null ? null : false
   };
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -1131,10 +1158,16 @@ async function waitForTimelineThread({ instanceUrl, accessToken, rootMarker, rep
       lastEvaluation = evaluateTimelineThread({
         statuses,
         rootMarker,
-        replyMarker
+        replyMarker,
+        expectedRemoteAcct,
+        expectedUriPrefix,
+        expectedVisibility
       });
 
-      if (lastEvaluation.threadLinked) {
+      const visibilityMatches = expectedVisibility === null
+        || (lastEvaluation.rootVisibilityMatches && lastEvaluation.replyVisibilityMatches);
+
+      if (lastEvaluation.threadLinked && visibilityMatches) {
         return {
           found: true,
           ...lastEvaluation
@@ -1142,7 +1175,7 @@ async function waitForTimelineThread({ instanceUrl, accessToken, rootMarker, rep
       }
 
       if (lastEvaluation.rootFound || lastEvaluation.replyFound) {
-        log(`timeline progress rootFound=${lastEvaluation.rootFound} replyFound=${lastEvaluation.replyFound} linked=${lastEvaluation.threadLinked}`);
+        log(`timeline progress rootFound=${lastEvaluation.rootFound} replyFound=${lastEvaluation.replyFound} linked=${lastEvaluation.threadLinked} rootVisibility=${String(lastEvaluation.rootVisibility)} replyVisibility=${String(lastEvaluation.replyVisibility)}`);
       }
     } catch (error) {
       log(`timeline retry error=${error instanceof Error ? error.message : String(error)}`);
@@ -1164,7 +1197,10 @@ async function waitForTimelineMediaPost({
   timeoutMs,
   log,
   expectedSensitive = null,
-  expectedSpoilerText = null
+  expectedSpoilerText = null,
+  expectedRemoteAcct = null,
+  expectedUriPrefix = null,
+  expectedVisibility = null
 }) {
   const startedAt = Date.now();
   let last = {
@@ -1172,7 +1208,8 @@ async function waitForTimelineMediaPost({
     hasMediaAttachment: false,
     statusId: null,
     sensitive: null,
-    spoilerText: null
+    spoilerText: null,
+    visibility: null
   };
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -1185,22 +1222,28 @@ async function waitForTimelineMediaPost({
       });
 
       const list = Array.isArray(statuses) ? statuses : [];
-      const status = list.find((entry) => statusContainsMarker(entry, marker)) ?? null;
+      const status = list.find((entry) => {
+        return statusMatchesExpectedBridge(entry, { expectedRemoteAcct, expectedUriPrefix })
+          && statusContainsMarker(entry, marker);
+      }) ?? null;
       const hasMediaAttachment = Array.isArray(status?.media_attachments) && status.media_attachments.length > 0;
       const sensitive = typeof status?.sensitive === "boolean" ? status.sensitive : null;
       const spoilerText = typeof status?.spoiler_text === "string" ? status.spoiler_text : "";
+      const visibility = typeof status?.visibility === "string" ? status.visibility : null;
       const sensitiveMatches = expectedSensitive === null || sensitive === expectedSensitive;
       const spoilerMatches = expectedSpoilerText === null || spoilerText === expectedSpoilerText;
+      const visibilityMatches = expectedVisibility === null || visibility === expectedVisibility;
 
       last = {
         found: status !== null,
         hasMediaAttachment,
         statusId: status?.id ?? null,
         sensitive,
-        spoilerText
+        spoilerText,
+        visibility
       };
 
-      if (last.found && last.hasMediaAttachment && sensitiveMatches && spoilerMatches) {
+      if (last.found && last.hasMediaAttachment && sensitiveMatches && spoilerMatches && visibilityMatches) {
         return last;
       }
 
@@ -1208,6 +1251,8 @@ async function waitForTimelineMediaPost({
         log("timeline media post found but media attachments missing yet; waiting...");
       } else if (last.found && (!sensitiveMatches || !spoilerMatches)) {
         log(`timeline media labels waiting; sensitive=${String(sensitive)} spoiler=${JSON.stringify(spoilerText)}`);
+      } else if (last.found && !visibilityMatches) {
+        log(`timeline media visibility waiting; visibility=${String(visibility)}`);
       }
     } catch (error) {
       log(`timeline media retry error=${error instanceof Error ? error.message : String(error)}`);
@@ -1219,10 +1264,22 @@ async function waitForTimelineMediaPost({
   return last;
 }
 
-export function evaluateTimelineThread({ statuses, rootMarker, replyMarker }) {
+export function evaluateTimelineThread({
+  statuses,
+  rootMarker,
+  replyMarker,
+  expectedRemoteAcct = null,
+  expectedUriPrefix = null,
+  expectedVisibility = null
+}) {
   const list = Array.isArray(statuses) ? statuses : [];
-  const rootStatus = list.find((status) => statusContainsMarker(status, rootMarker)) ?? null;
-  const replyStatus = list.find((status) => statusContainsMarker(status, replyMarker)) ?? null;
+  const matchingBridgeStatuses = list.filter((status) => {
+    return statusMatchesExpectedBridge(status, { expectedRemoteAcct, expectedUriPrefix });
+  });
+  const rootStatus = matchingBridgeStatuses.find((status) => statusContainsMarker(status, rootMarker)) ?? null;
+  const replyStatus = matchingBridgeStatuses.find((status) => statusContainsMarker(status, replyMarker)) ?? null;
+  const rootVisibility = typeof rootStatus?.visibility === "string" ? rootStatus.visibility : null;
+  const replyVisibility = typeof replyStatus?.visibility === "string" ? replyStatus.visibility : null;
 
   const linkedById = rootStatus?.id && replyStatus?.in_reply_to_id
     ? String(replyStatus.in_reply_to_id) === String(rootStatus.id)
@@ -1236,7 +1293,11 @@ export function evaluateTimelineThread({ statuses, rootMarker, replyMarker }) {
     replyFound: replyStatus !== null,
     threadLinked: Boolean(linkedById || linkedByUri),
     rootStatusId: rootStatus?.id ?? null,
-    replyStatusId: replyStatus?.id ?? null
+    replyStatusId: replyStatus?.id ?? null,
+    rootVisibility,
+    replyVisibility,
+    rootVisibilityMatches: expectedVisibility === null ? null : rootVisibility === expectedVisibility,
+    replyVisibilityMatches: expectedVisibility === null ? null : replyVisibility === expectedVisibility
   };
 }
 
@@ -1247,6 +1308,18 @@ export function extractPostRkeyFromAtUri(uri) {
   }
 
   return match[1];
+}
+
+function statusMatchesExpectedBridge(status, { expectedRemoteAcct = null, expectedUriPrefix = null }) {
+  if (expectedRemoteAcct && status?.account?.acct !== expectedRemoteAcct) {
+    return false;
+  }
+
+  if (expectedUriPrefix) {
+    return typeof status?.uri === "string" && status.uri.startsWith(expectedUriPrefix);
+  }
+
+  return true;
 }
 
 function statusContainsMarker(status, marker) {
@@ -1327,7 +1400,9 @@ async function waitForBridgeThreadReadSurface({
     outboxHasReply: false,
     rootObjectFound: false,
     replyObjectFound: false,
-    replyLinkedToRoot: false
+    replyLinkedToRoot: false,
+    rootObjectUnlisted: false,
+    replyObjectUnlisted: false
   };
 
   const encodedDid = encodeURIComponent(did);
@@ -1366,20 +1441,30 @@ async function waitForBridgeThreadReadSurface({
         && typeof replyObject?.content === "string"
         && replyObject.content.includes(replyMarker);
       const replyLinkedToRoot = replyObjectFound && replyObject?.inReplyTo === rootObjectId;
+      const rootObjectUnlisted = hasUnlistedAudience(rootObject, {
+        publicAudience: "https://www.w3.org/ns/activitystreams#Public",
+        followers: `${publicBaseUrl}/ap/actor/${encodedDid}/followers`
+      });
+      const replyObjectUnlisted = hasUnlistedAudience(replyObject, {
+        publicAudience: "https://www.w3.org/ns/activitystreams#Public",
+        followers: `${publicBaseUrl}/ap/actor/${encodedDid}/followers`
+      });
 
       last = {
         outboxHasRoot,
         outboxHasReply,
         rootObjectFound,
         replyObjectFound,
-        replyLinkedToRoot
+        replyLinkedToRoot,
+        rootObjectUnlisted,
+        replyObjectUnlisted
       };
 
-      if (outboxHasRoot && outboxHasReply && rootObjectFound && replyObjectFound && replyLinkedToRoot) {
+      if (outboxHasRoot && outboxHasReply && rootObjectFound && replyObjectFound && replyLinkedToRoot && rootObjectUnlisted && replyObjectUnlisted) {
         return { ok: true, ...last };
       }
 
-      log(`bridge-read progress outboxRoot=${outboxHasRoot} outboxReply=${outboxHasReply} rootObj=${rootObjectFound} replyObj=${replyObjectFound} linked=${replyLinkedToRoot}`);
+      log(`bridge-read progress outboxRoot=${outboxHasRoot} outboxReply=${outboxHasReply} rootObj=${rootObjectFound} replyObj=${replyObjectFound} linked=${replyLinkedToRoot} rootUnlisted=${rootObjectUnlisted} replyUnlisted=${replyObjectUnlisted}`);
     } catch (error) {
       log(`bridge-read retry error=${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1388,6 +1473,13 @@ async function waitForBridgeThreadReadSurface({
   }
 
   return { ok: false, ...last };
+}
+
+function hasUnlistedAudience(activityOrObject, { publicAudience, followers }) {
+  return Array.isArray(activityOrObject?.to)
+    && activityOrObject.to.includes(followers)
+    && Array.isArray(activityOrObject?.cc)
+    && activityOrObject.cc.includes(publicAudience);
 }
 
 async function waitForBridgeMediaObject({

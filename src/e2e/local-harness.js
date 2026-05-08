@@ -52,15 +52,22 @@ export async function runLocalE2EHarness({ workDir = null, cleanup = true } = {}
       }
     });
 
+    const queuedActivity = runtime.queue.list()[0]?.activity ?? null;
+    const queuedUnlisted = Array.isArray(queuedActivity?.to)
+      && queuedActivity.to.includes("https://bridge.example/ap/actor/did%3Aplc%3Aalice/followers")
+      && Array.isArray(queuedActivity?.cc)
+      && queuedActivity.cc.includes("https://www.w3.org/ns/activitystreams#Public");
     const firstDrain = await runtime.drainDeliveries({ max: 5, now: 1_000 });
     const secondDrain = await runtime.drainDeliveries({ max: 5, now: 2_500 });
 
     const summary = {
       ok: ingest.status === "enqueued"
+        && queuedUnlisted
         && firstDrain.some((entry) => entry.status === "retry-scheduled")
         && secondDrain.some((entry) => entry.status === "delivered")
         && runtime.queue.size() === 0,
       ingestStatus: ingest.status,
+      queuedUnlisted,
       firstDrain,
       secondDrain,
       queueSize: runtime.queue.size(),

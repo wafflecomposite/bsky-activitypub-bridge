@@ -132,8 +132,8 @@ export function buildAudience({ baseUrl, did, visibility = DEFAULT_VISIBILITY })
 
   if (visibility === "unlisted") {
     return {
-      to: [PUBLIC_AUDIENCE],
-      cc: [followers]
+      to: [followers],
+      cc: [PUBLIC_AUDIENCE]
     };
   }
 

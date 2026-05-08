@@ -106,7 +106,7 @@ export function createBridgeApplication({
           ? () => resolvedStore.listFollowedDids?.() ?? []
           : null,
         wantedDidsRefreshMs: jetstream.wantedDidsRefreshMs ?? 30_000,
-        wantedCollections: jetstream.wantedCollections ?? ["app.bsky.feed.post", "app.bsky.feed.repost"],
+        wantedCollections: jetstream.wantedCollections ?? ["app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.actor.profile"],
         allowUnfiltered: jetstream.allowUnfiltered ?? false,
         jetstreamUrl: jetstream.url,
         reconnectDelayMs: jetstream.reconnectDelayMs ?? 1000,

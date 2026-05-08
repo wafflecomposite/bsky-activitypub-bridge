@@ -9,3 +9,7 @@ export function blueskyProfileUrl({ did, handle = null }) {
 export function blueskyPostUrl({ did, rkey, handle = null }) {
   return `${blueskyProfileUrl({ did, handle })}/post/${rkey}`;
 }
+
+export function blueskyBlobUrl({ did, cid }) {
+  return `https://bsky.social/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`;
+}

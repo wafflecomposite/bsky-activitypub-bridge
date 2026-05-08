@@ -1,3 +1,6 @@
+import { buildActorDocument } from "../ap/actor.js";
+import { blueskyBlobUrl } from "../bsky/web-url.js";
+import { InMemoryKeyManager } from "../crypto/key-manager.js";
 import { actorId, objectId } from "../domain/identifiers.js";
 import { buildAudience, mapBskyPostToActivityPub, parseAtPostUri } from "../bridge/post-mapper.js";
 import { planDeliveryTargets } from "../delivery/recipient-planner.js";
@@ -9,12 +12,14 @@ export class JetstreamProcessor {
   #baseUrl;
   #shardId;
   #postVisibility;
+  #keyManager;
 
-  constructor({ state, queue, store, baseUrl, shardId = "default", postVisibility = "unlisted" }) {
+  constructor({ state, queue, store, baseUrl, keyManager = new InMemoryKeyManager(), shardId = "default", postVisibility = "unlisted" }) {
     this.#state = state;
     this.#queue = queue;
     this.#store = store;
     this.#baseUrl = baseUrl;
+    this.#keyManager = keyManager;
     this.#shardId = shardId;
     this.#postVisibility = postVisibility;
   }
@@ -47,6 +52,10 @@ export class JetstreamProcessor {
         cursor: note.cursor,
         enqueued: 0
       };
+    }
+
+    if (parsed.collection === "app.bsky.actor.profile") {
+      return this.#processProfileCommit({ parsed, cursor: note.cursor });
     }
 
     let activity;
@@ -121,6 +130,105 @@ export class JetstreamProcessor {
       skipped: deliveryPlan.skipped
     };
   }
+
+  #processProfileCommit({ parsed, cursor }) {
+    const existing = this.#store.getActorByDid(parsed.did);
+    if (!existing) {
+      return {
+        status: "profile-no-actor",
+        cursor,
+        enqueued: 0
+      };
+    }
+
+    let nextActor;
+    try {
+      nextActor = mapProfileCommitToActor({
+        did: parsed.did,
+        operation: parsed.operation,
+        record: parsed.record,
+        existing
+      });
+    } catch (error) {
+      return {
+        status: "invalid-event",
+        cursor,
+        enqueued: 0,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+
+    const changed = hasActorProfileChanged(existing, nextActor);
+    const updatedActor = this.#store.upsertActor({
+      ...nextActor,
+      profileFetchedAt: new Date().toISOString()
+    });
+
+    if (!changed) {
+      return {
+        status: "profile-unchanged",
+        cursor,
+        enqueued: 0
+      };
+    }
+
+    const followers = this.#store.listFollowers(parsed.did);
+    if (followers.length === 0) {
+      return {
+        status: "no-followers",
+        cursor,
+        enqueued: 0
+      };
+    }
+
+    const deliveryPlan = planDeliveryTargets(followers);
+    if (deliveryPlan.deliveries.length === 0) {
+      return {
+        status: "no-delivery-targets",
+        cursor,
+        enqueued: 0,
+        skipped: deliveryPlan.skipped
+      };
+    }
+
+    const actor = actorId(this.#baseUrl, parsed.did);
+    const audience = buildAudience({ baseUrl: this.#baseUrl, did: parsed.did, visibility: this.#postVisibility });
+    const keys = this.#keyManager.ensureKeyPair(parsed.did);
+    const activity = {
+      "@context": "https://www.w3.org/ns/activitystreams",
+      id: `${actor}/activity/update/${encodeURIComponent(String(parsed.timeUs ?? Date.now()))}`,
+      type: "Update",
+      actor,
+      to: audience.to,
+      cc: audience.cc,
+      object: buildActorDocument({
+        baseUrl: this.#baseUrl,
+        profile: updatedActor,
+        publicKeyPem: keys.publicKeyPem
+      })
+    };
+
+    let enqueued = 0;
+    for (const delivery of deliveryPlan.deliveries) {
+      this.#queue.enqueue({
+        did: parsed.did,
+        rkey: `profile:${parsed.rkey}`,
+        destination: delivery.destination,
+        recipientActorIds: delivery.recipients,
+        activity,
+        cursor,
+        operation: "profile-update"
+      });
+      enqueued += 1;
+    }
+
+    return {
+      status: "enqueued",
+      cursor,
+      enqueued,
+      skipped: deliveryPlan.skipped
+    };
+  }
 }
 
 export class InMemoryDeliveryQueue {
@@ -188,6 +296,10 @@ function normalizeJetstreamEvent(event) {
 }
 
 function isSupportedCommit(parsed) {
+  if (parsed.collection === "app.bsky.actor.profile") {
+    return ["create", "update", "delete"].includes(parsed.operation);
+  }
+
   if (!["app.bsky.feed.post", "app.bsky.feed.repost"].includes(parsed.collection)) {
     return false;
   }
@@ -272,6 +384,10 @@ function normalizeTimeUs(value) {
 }
 
 function persistMappedActivity({ store, did, rkey, collection, operation, activity, cursor }) {
+  if (!["app.bsky.feed.post", "app.bsky.feed.repost"].includes(collection)) {
+    return;
+  }
+
   if (typeof store?.upsertObjectActivity !== "function") {
     return;
   }
@@ -291,6 +407,70 @@ function persistMappedActivity({ store, did, rkey, collection, operation, activi
     activity,
     cursor
   });
+}
+
+function mapProfileCommitToActor({ did, operation, record, existing }) {
+  if (operation !== "delete" && (!record || typeof record !== "object")) {
+    throw new Error(`Jetstream ${operation} missing profile record`);
+  }
+
+  const profile = operation === "delete" ? {} : record;
+
+  return {
+    did,
+    handle: existing.handle,
+    displayName: readOptionalString(profile.displayName),
+    summary: readOptionalString(profile.description),
+    avatarUrl: profileBlobUrl({ did, blob: profile.avatar }),
+    bannerUrl: profileBlobUrl({ did, blob: profile.banner }),
+    pinnedPostUri: extractPinnedPostUri(profile)
+  };
+}
+
+function hasActorProfileChanged(existing, nextActor) {
+  return existing.displayName !== nextActor.displayName
+    || existing.summary !== nextActor.summary
+    || existing.avatarUrl !== nextActor.avatarUrl
+    || existing.bannerUrl !== nextActor.bannerUrl
+    || existing.pinnedPostUri !== nextActor.pinnedPostUri;
+}
+
+function readOptionalString(value) {
+  return typeof value === "string" && value ? value : null;
+}
+
+function profileBlobUrl({ did, blob }) {
+  const cid = extractBlobCid(blob);
+  return cid ? blueskyBlobUrl({ did, cid }) : null;
+}
+
+function extractBlobCid(blob) {
+  if (!blob || typeof blob !== "object") {
+    return null;
+  }
+
+  if (typeof blob?.ref?.$link === "string") {
+    return blob.ref.$link;
+  }
+
+  if (typeof blob.ref === "string") {
+    return blob.ref;
+  }
+
+  if (typeof blob.cid === "string") {
+    return blob.cid;
+  }
+
+  return null;
+}
+
+function extractPinnedPostUri(profile) {
+  const direct = profile?.pinnedPost?.uri;
+  if (typeof direct === "string" && direct) {
+    return direct;
+  }
+
+  return null;
 }
 
 function resolveBridgedReplyObjectId({ baseUrl, store, replyDid, replyRkey }) {

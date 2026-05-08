@@ -67,6 +67,7 @@ The automated harness:
 - verifies AP fetch paths still work for remote import despite browser-facing redirects
 - imports an unfollowed bridge object through GtS status search
 - discovers and follows the bridged account from GtS
+- temporarily updates the Bluesky profile description and verifies GtS receives the ActivityPub actor `Update`, then restores the original profile
 - publishes a real Bluesky thread and verifies delivery/linkage in GtS
 - verifies bridge outbox/object endpoints for the thread
 - publishes a media post and verifies GtS plus AP attachment output

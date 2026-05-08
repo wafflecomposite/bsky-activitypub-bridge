@@ -33,6 +33,7 @@ export async function runLiveE2EHarness({
 
   let tunnel = null;
   let app = null;
+  let pendingProfileRestore = null;
 
   try {
     tunnel = await startQuickTunnel({
@@ -135,7 +136,7 @@ export async function runLiveE2EHarness({
         enabled: true,
         autoFollowedDids: false,
         wantedDids: [did],
-        wantedCollections: ["app.bsky.feed.post", "app.bsky.feed.repost"],
+        wantedCollections: ["app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.actor.profile"],
         wantedDidsRefreshMs: 0
       },
       delivery: {
@@ -152,6 +153,25 @@ export async function runLiveE2EHarness({
 
     app.store.upsertActor({ did, handle: resolvedCredentials.blueskyIdentifier });
     await app.start({ host: "127.0.0.1", port });
+
+    const profileUpdateMarker = `Bridge automated live e2e profile ${new Date().toISOString()}`;
+    pendingProfileRestore = await setTemporaryBlueskyProfileDescription({
+      identifier: resolvedCredentials.blueskyIdentifier,
+      appPassword: resolvedCredentials.blueskyAppPassword,
+      marker: profileUpdateMarker
+    });
+    const profileUpdate = await waitForProfileUpdate({
+      localBaseUrl,
+      did,
+      instanceUrl: resolvedCredentials.gtsInstanceUrl,
+      accessToken: resolvedCredentials.gtsAccessToken,
+      accountId: discovered.id,
+      marker: profileUpdateMarker,
+      timeoutMs: 180_000,
+      log
+    });
+    const profileRestore = await restoreBlueskyProfileRecord(pendingProfileRestore);
+    pendingProfileRestore = null;
 
     const postedThread = await createBlueskyThread({
       identifier: resolvedCredentials.blueskyIdentifier,
@@ -292,6 +312,9 @@ export async function runLiveE2EHarness({
         && resolverPost.ok === true
         && resolverPostSearch.found === true
         && resolverPostSearch.url === expectedRootBlueskyPostUrl
+        && profileUpdate.actorSummaryHasMarker === true
+        && profileUpdate.remoteNoteHasMarker === true
+        && profileRestore.restored === true
         && timelineThread.threadLinked === true
         && bridgeReadSurface.ok === true
         && timelineMedia.hasMediaAttachment === true
@@ -321,6 +344,8 @@ export async function runLiveE2EHarness({
       postedThread,
       resolverPost,
       resolverPostSearch,
+      profileUpdate,
+      profileRestore,
       timelineThread,
       bridgeReadSurface,
       postedMedia,
@@ -336,6 +361,11 @@ export async function runLiveE2EHarness({
 
     return summary;
   } finally {
+    if (pendingProfileRestore) {
+      await safeRestoreBlueskyProfileRecord(pendingProfileRestore, log);
+      pendingProfileRestore = null;
+    }
+
     await safeStopApp(app);
     await safeStopTunnel(tunnel);
 
@@ -777,6 +807,93 @@ async function createBlueskySession({ identifier, appPassword }) {
   return sessionResponse.json();
 }
 
+async function setTemporaryBlueskyProfileDescription({ identifier, appPassword, marker }) {
+  const session = await createBlueskySession({ identifier, appPassword });
+  const originalRecord = await getBlueskyProfileRecord({ session });
+  const originalDescription = typeof originalRecord.description === "string"
+    ? originalRecord.description
+    : "";
+  const nextDescription = originalDescription
+    ? `${originalDescription}\n\n${marker}`
+    : marker;
+
+  await putBlueskyProfileRecord({
+    session,
+    record: {
+      ...originalRecord,
+      description: nextDescription
+    }
+  });
+
+  return {
+    session,
+    originalRecord
+  };
+}
+
+async function restoreBlueskyProfileRecord(restore) {
+  await putBlueskyProfileRecord({
+    session: restore.session,
+    record: restore.originalRecord
+  });
+
+  return { restored: true };
+}
+
+async function safeRestoreBlueskyProfileRecord(restore, log) {
+  try {
+    await restoreBlueskyProfileRecord(restore);
+  } catch (error) {
+    log(`profile-restore error=${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function getBlueskyProfileRecord({ session }) {
+  const response = await fetch(
+    `https://bsky.social/xrpc/com.atproto.repo.getRecord?repo=${encodeURIComponent(session.did)}&collection=app.bsky.actor.profile&rkey=self`,
+    {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${session.accessJwt}`,
+        "content-type": "application/json"
+      }
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Bluesky profile getRecord failed: ${response.status}`);
+  }
+
+  const body = await response.json();
+  if (!body?.value || typeof body.value !== "object") {
+    throw new Error("Bluesky profile getRecord returned invalid value");
+  }
+
+  return body.value;
+}
+
+async function putBlueskyProfileRecord({ session, record }) {
+  const response = await fetch("https://bsky.social/xrpc/com.atproto.repo.putRecord", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${session.accessJwt}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      repo: session.did,
+      collection: "app.bsky.actor.profile",
+      rkey: "self",
+      record
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Bluesky profile putRecord failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
 async function createBlueskyPostRecord({ session, text, reply = null, recordExtra = null }) {
   const nowIso = new Date().toISOString();
   const createResponse = await fetch("https://bsky.social/xrpc/com.atproto.repo.createRecord", {
@@ -934,6 +1051,62 @@ async function createBlueskyThread({ identifier, appPassword, textPrefix }) {
       cid: replyCreated.cid
     }
   };
+}
+
+async function waitForProfileUpdate({
+  localBaseUrl,
+  did,
+  instanceUrl,
+  accessToken,
+  accountId,
+  marker,
+  timeoutMs,
+  log
+}) {
+  const actorUrl = `${localBaseUrl}/ap/actor/${encodeURIComponent(did)}`;
+  const startedAt = Date.now();
+  let last = {
+    actorSummaryHasMarker: false,
+    remoteNoteHasMarker: false,
+    actorSummary: null,
+    remoteNote: null
+  };
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const [actorResponse, account] = await Promise.all([
+        retryFetch(() => fetch(actorUrl), 3, 500),
+        gtsApi({
+          instanceUrl,
+          accessToken,
+          path: `/api/v1/accounts/${encodeURIComponent(accountId)}`,
+          timeoutMs: 30_000
+        })
+      ]);
+      const actor = actorResponse.ok ? await actorResponse.json() : null;
+      const actorSummary = typeof actor?.summary === "string" ? actor.summary : "";
+      const remoteNote = typeof account?.note === "string" ? account.note : "";
+
+      last = {
+        actorSummaryHasMarker: actorSummary.includes(marker),
+        remoteNoteHasMarker: remoteNote.includes(marker),
+        actorSummary,
+        remoteNote
+      };
+
+      if (last.actorSummaryHasMarker && last.remoteNoteHasMarker) {
+        return last;
+      }
+
+      log(`profile update waiting; actor=${last.actorSummaryHasMarker} remote=${last.remoteNoteHasMarker}`);
+    } catch (error) {
+      log(`profile update retry error=${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    await sleep(2_000);
+  }
+
+  return last;
 }
 
 async function waitForTimelineThread({ instanceUrl, accessToken, rootMarker, replyMarker, timeoutMs, log }) {

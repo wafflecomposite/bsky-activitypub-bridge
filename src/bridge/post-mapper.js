@@ -3,7 +3,7 @@ import {
   actorId,
   objectId
 } from "../domain/identifiers.js";
-import { blueskyPostUrl } from "../bsky/web-url.js";
+import { blueskyBlobUrl, blueskyPostUrl } from "../bsky/web-url.js";
 
 const PUBLIC_AUDIENCE = "https://www.w3.org/ns/activitystreams#Public";
 const DEFAULT_VISIBILITY = "unlisted";
@@ -431,7 +431,7 @@ function extractBlobCid(blob) {
 }
 
 function buildBlobDownloadUrl({ did, cid }) {
-  return `https://bsky.social/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`;
+  return blueskyBlobUrl({ did, cid });
 }
 
 function createUtf8BoundaryMap(text) {

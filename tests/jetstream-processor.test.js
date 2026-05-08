@@ -119,6 +119,130 @@ test("JetstreamProcessor advances cursor but ignores non-post collections", () =
   assert.equal(state.getCursor("shard-1"), 222);
 });
 
+test("JetstreamProcessor maps profile updates to ActivityPub actor Update", () => {
+  const { store, state, queue, processor } = createProcessorFixture();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    displayName: "Old Alice",
+    summary: "old bio",
+    avatarUrl: "https://cdn.example/old-avatar.jpg"
+  });
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/a1",
+    inboxUrl: "https://remote.example/users/a1/inbox"
+  });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 333,
+    commit: {
+      collection: "app.bsky.actor.profile",
+      operation: "update",
+      rkey: "self",
+      record: {
+        displayName: "New Alice",
+        description: "new bio",
+        avatar: {
+          $type: "blob",
+          ref: {
+            $link: "bafkreiavatar"
+          },
+          mimeType: "image/jpeg"
+        }
+      }
+    }
+  });
+
+  assert.equal(result.status, "enqueued");
+  assert.equal(result.enqueued, 1);
+  assert.equal(state.getCursor("shard-1"), 333);
+
+  const actor = store.getActorByDid("did:plc:alice");
+  assert.equal(actor.displayName, "New Alice");
+  assert.equal(actor.summary, "new bio");
+  assert.equal(
+    actor.avatarUrl,
+    "https://bsky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Aalice&cid=bafkreiavatar"
+  );
+  assert.equal(typeof actor.profileFetchedAt, "string");
+
+  const queued = queue.list()[0];
+  assert.equal(queued.operation, "profile-update");
+  assert.equal(queued.activity.type, "Update");
+  assert.equal(queued.activity.actor, "https://bridge.example/ap/actor/did%3Aplc%3Aalice");
+  assert.equal(queued.activity.object.type, "Service");
+  assert.equal(queued.activity.object.name, "New Alice");
+  assert.equal(queued.activity.object.summary.includes("new bio"), true);
+  assert.equal(
+    queued.activity.object.icon.url,
+    "https://bsky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3Aalice&cid=bafkreiavatar"
+  );
+  assert.equal(typeof queued.activity.object.publicKey.publicKeyPem, "string");
+  assert.equal(store.getObjectByRkey("did:plc:alice", "app.bsky.actor.profile:self"), null);
+});
+
+test("JetstreamProcessor updates stored profile without delivery when profile has no followers", () => {
+  const { store, queue, processor } = createProcessorFixture();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    summary: "old bio"
+  });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 334,
+    commit: {
+      collection: "app.bsky.actor.profile",
+      operation: "update",
+      rkey: "self",
+      record: {
+        description: "new bio"
+      }
+    }
+  });
+
+  assert.equal(result.status, "no-followers");
+  assert.equal(queue.size(), 0);
+  assert.equal(store.getActorByDid("did:plc:alice").summary, "new bio");
+});
+
+test("JetstreamProcessor does not deliver unchanged profile updates", () => {
+  const { store, queue, processor } = createProcessorFixture();
+
+  store.upsertActor({
+    did: "did:plc:alice",
+    handle: "alice.bsky.social",
+    displayName: "Alice",
+    summary: "same bio"
+  });
+  store.addFollower("did:plc:alice", {
+    actorId: "https://remote.example/users/a1",
+    inboxUrl: "https://remote.example/users/a1/inbox"
+  });
+
+  const result = processor.process({
+    did: "did:plc:alice",
+    time_us: 335,
+    commit: {
+      collection: "app.bsky.actor.profile",
+      operation: "update",
+      rkey: "self",
+      record: {
+        displayName: "Alice",
+        description: "same bio"
+      }
+    }
+  });
+
+  assert.equal(result.status, "profile-unchanged");
+  assert.equal(queue.size(), 0);
+  assert.equal(typeof store.getActorByDid("did:plc:alice").profileFetchedAt, "string");
+});
+
 test("JetstreamProcessor handles delete by enqueuing Delete activity", () => {
   const { store, queue, processor } = createProcessorFixture();
 

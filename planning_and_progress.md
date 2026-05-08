@@ -21,6 +21,7 @@ ActivityPub surface:
 - WebFinger, actor, inbox, followers, following, featured, outbox, object, root resolver page, and `/api/resolve`.
 - Follow inbox accepts and stores followers, resolves remote actor inboxes, queues signed `Accept` delivery, and can enforce inbound legacy HTTP signatures.
 - Actor documents use ActivityStreams `Service` type for bridged profiles so Mastodon-compatible servers mark them as bots; they also include bridge profile metadata, original Bluesky web URL, public key material, counters/collections, and featured collection link.
+- Bluesky profile commits for followed actors update stored actor profile fields and fan out ActivityPub actor `Update` activities.
 - Object/outbox endpoints serve cached or on-demand-materialized bridged posts; deleted objects return `Tombstone`.
 - Browser/HTML requests to bridged actor and object URLs redirect to the corresponding Bluesky profile/post, while ActivityPub/JSON/default fetches still receive AP JSON.
 - Resolver landing page examples use the official `bsky.app` profile and post URLs.
@@ -28,7 +29,7 @@ ActivityPub surface:
 Bluesky side:
 - DID is canonical; handles are aliases.
 - Unknown handles can be resolved/materialized on WebFinger or resolver lookup.
-- Jetstream ingest supports scoped wanted DIDs/collections, cursor/dedup state, reconnect rewind, and client-side DID filtering.
+- Jetstream ingest supports scoped wanted DIDs/collections, profile update fanout, cursor/dedup state, reconnect rewind, and client-side DID filtering.
 - Unfiltered Jetstream is blocked by default unless `UNSAFE_ALLOW_UNFILTERED_JETSTREAM` is set.
 - Post mapper covers text facets, links, mentions, hashtags, replies/thread context, original Bluesky web URLs, Bluesky content labels/CWs with sensitive media flags, media/external/record embeds, reposts, updates, and deletes.
 
@@ -41,7 +42,7 @@ Delivery and durability:
 Testing:
 - Unit/integration coverage spans identifiers, AP generation, follow handling, signatures, resolver parsing, post mapping, stores, queues, Jetstream, runtime wiring, server dispatch, and recovery.
 - Local E2E covers ingest, retry/delivery, and cursor continuity.
-- Live E2E uses real Bluesky + GtS through a Cloudflare tunnel and covers discovery, follow, resolver actor/post targets, unfollowed post import, threaded delivery, media, labeled media CW/sensitivity, reposts, AP read surfaces, and runtime metrics.
+- Live E2E uses real Bluesky + GtS through a Cloudflare tunnel and covers discovery, follow, resolver actor/post targets, unfollowed post import, profile update delivery, threaded delivery, media, labeled media CW/sensitivity, reposts, AP read surfaces, and runtime metrics.
 
 ## Verification
 
@@ -58,8 +59,8 @@ Live verification:
 - `RUN_LIVE_E2E=1 npm run e2e:live:ci`
 
 Last live verification on 2026-05-08:
-- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS through `https://love-helped-privileges-thickness.trycloudflare.com`.
-- Confirmed served actor `type: "Service"`, remote GtS account API `bot: true`, original Bluesky profile/post URLs exposed through GtS while AP URI fetch/import still works, and labeled media maps to AP/GtS reason-only CW plus sensitive media state.
+- `npm run e2e:live` returned `ok: true` against real Bluesky + GtS through `https://enable-ricky-transit-metallic.trycloudflare.com`.
+- Confirmed served actor `type: "Service"`, remote GtS account API `bot: true`, original Bluesky profile/post URLs exposed through GtS while AP URI fetch/import still works, profile description changes fan out as AP actor `Update`, and labeled media maps to AP/GtS reason-only CW plus sensitive media state.
 
 Do not mark live federation work complete unless the live harness passes or the failure is intentionally documented with artifacts.
 

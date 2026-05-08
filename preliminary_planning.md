@@ -21,7 +21,7 @@ Success criteria:
   - following: `/ap/actor/{did}/following`
   - featured: `/ap/actor/{did}/featured`
   - object: `/ap/object/{did}/{rkey}`
-- Use Jetstream as the primary Bluesky ingest source, scoped by wanted DIDs and collections.
+- Use Jetstream as the primary Bluesky ingest source, scoped by wanted DIDs and collections, including profile commits for actor update fanout.
 - Use public Bluesky AppView/repo HTTP APIs only for discovery, profile hydration, on-demand object materialization, and cases where Jetstream commit data is insufficient.
 - Do not run unfiltered firehose ingest by default.
 - Prefer remote media/CDN URLs in ActivityPub attachments; avoid proxying blobs unless a later compatibility issue requires it.
@@ -52,6 +52,7 @@ Actor:
 - Bluesky profile maps to ActivityPub `Service` so Mastodon-compatible servers treat bridged profiles as bot accounts.
 - Include profile fields where available: handle, display name, description, avatar, banner, original Bluesky web URL, bridge notice, followers/outbox/following/featured links, and public key.
 - Generate and persist a signing key per DID.
+- `app.bsky.actor.profile` commits for followed actors produce ActivityPub actor `Update` delivery when profile fields change.
 
 Post:
 - `app.bsky.feed.post` create maps to `Create` with `Note`.

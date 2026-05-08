@@ -23,6 +23,7 @@ export class BridgeRuntime {
       state,
       queue,
       store,
+      keyManager,
       baseUrl,
       shardId: this.shardId,
       postVisibility
@@ -75,7 +76,7 @@ export class BridgeRuntime {
     wantedDids = [],
     wantedDidsProvider = null,
     wantedDidsRefreshMs = 0,
-    wantedCollections = ["app.bsky.feed.post"],
+    wantedCollections = ["app.bsky.feed.post", "app.bsky.feed.repost", "app.bsky.actor.profile"],
     allowUnfiltered = false,
     jetstreamUrl,
     reconnectDelayMs = 1000,
